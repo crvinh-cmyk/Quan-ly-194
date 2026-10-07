@@ -1,0 +1,1996 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Product, Customer, Order, OrderItem, Material, ProductCategory } from '../types';
+import { formatCurrency, formatNumber, getTodayDateString, formatDateVN, numberToVietnameseWords } from '../utils/formatters';
+import { calculateOrderBOM, calculateItemBOM, createMaterialDeductionRecords, extractEffectiveSize, normalizeSize } from '../utils/materialBOM';
+import {
+  Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
+  ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
+  Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X
+} from 'lucide-react';
+import { MoneyInput } from './MoneyInput';
+import {
+  POPULAR_PRODUCT_PRESETS,
+  PopularPresetDef,
+  resolvePopularProduct,
+  resolveProductByCodeOrBase,
+  getStoredCustomPinnedCodes,
+  saveStoredCustomPinnedCodes,
+  getStoredSelectedPopularCodes,
+  saveStoredSelectedPopularCodes,
+  resetStoredSelectedPopularCodes,
+  DEFAULT_POPULAR_BASE_CODES,
+  convertProductCodeForTier
+} from '../utils/productHelpers';
+
+interface SalesInvoiceFormProps {
+  products: Product[];
+  customers: Customer[];
+  allOrders: Order[];
+  materials?: Material[];
+  onSaveOrder: (order: Order, openPrint: boolean) => void;
+  onAddNewCustomer: (customer: Customer) => void;
+  onAddNewProduct: (product: Product) => void;
+  newOrderTrigger?: number;
+}
+
+export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
+  products,
+  customers,
+  allOrders,
+  materials = [],
+  onSaveOrder,
+  onAddNewCustomer,
+  onAddNewProduct,
+  newOrderTrigger
+}) => {
+  // Order general info
+  const [orderDate, setOrderDate] = useState<string>(getTodayDateString());
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [customerAddress, setCustomerAddress] = useState<string>('');
+  const [orderNotes, setOrderNotes] = useState<string>('');
+  const [orderStatus, setOrderStatus] = useState<Order['status']>('completed');
+  const [autoDeductStock, setAutoDeductStock] = useState<boolean>(true);
+
+  // MDF Dispatch Slip state
+  const [manualMdfOverrides, setManualMdfOverrides] = useState<Record<string, { materialId: string; quantity?: number }>>({});
+  const [manualExtraMdfItems, setManualExtraMdfItems] = useState<{
+    id: string;
+    materialId: string;
+    quantity: number;
+    note?: string;
+  }[]>([]);
+  const [excludedSourceRowIds, setExcludedSourceRowIds] = useState<string[]>([]);
+  const [autoDeductMdf, setAutoDeductMdf] = useState<boolean>(true);
+
+  // Customer suggestions dropdown
+  const [customerSearch, setCustomerSearch] = useState<string>('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState<boolean>(false);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Quick Customer Creation state
+  const [showQuickCustomerModal, setShowQuickCustomerModal] = useState<boolean>(false);
+  const [newCustName, setNewCustName] = useState<string>('');
+  const [newCustPhone, setNewCustPhone] = useState<string>('');
+  const [newCustAddress, setNewCustAddress] = useState<string>('');
+  const [newCustType, setNewCustType] = useState<ProductCategory>('GIÁ STUDIO');
+  const [newCustInitialDebt, setNewCustInitialDebt] = useState<number>(0);
+
+  // Table rows (Order items)
+  const [items, setItems] = useState<OrderItem[]>([
+    {
+      id: 'row-1',
+      date: getTodayDateString(),
+      productCode: '',
+      productName: '',
+      size: '',
+      price: 0,
+      quantity: 1,
+      amount: 0,
+      note: ''
+    }
+  ]);
+
+  // Calculations state
+  const [discount, setDiscount] = useState<number>(0);
+  const [previousDebt, setPreviousDebt] = useState<number>(0);
+  const [paid, setPaid] = useState<number>(0);
+
+  // Active autocomplete suggestion row index
+  const [activeCodeRowIdx, setActiveCodeRowIdx] = useState<number | null>(null);
+  const [codeQuery, setCodeQuery] = useState<string>('');
+
+  // Browse catalog modal state
+  // Modal Chọn Nhanh Từ Bảng Giá Tiệm
+  const [showCatalogModal, setShowCatalogModal] = useState<boolean>(false);
+  const [catalogSearch, setCatalogSearch] = useState<string>('');
+  const [catalogCategory, setCatalogCategory] = useState<string>('all');
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState<boolean>(false);
+  const [popularTier, setPopularTier] = useState<ProductCategory>('GIÁ STUDIO');
+  const [favoriteCodes, setFavoriteCodes] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('xuongin194_user_favorite_codes_v1');
+      if (!raw) return [
+        'HDST60*90', 'MKST60*90', 'LVST60*90', 'LKST60*90K456',
+        'HDST50*75', 'MKST50*75', 'HDST20*30', 'MKST20*30',
+        'inepST20*30', 'inST20*30', 'inST60*90',
+        'NEPST1', 'NEPST2', 'NEPST3',
+        'ABMP20x20', 'ABMP20x30', 'ABMP30x30'
+      ];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : [
+        'HDST60*90', 'MKST60*90', 'LVST60*90', 'LKST60*90K456',
+        'HDST50*75', 'MKST50*75', 'HDST20*30', 'MKST20*30',
+        'inepST20*30', 'inST20*30', 'inST60*90',
+        'NEPST1', 'NEPST2', 'NEPST3',
+        'ABMP20x20', 'ABMP20x30', 'ABMP30x30'
+      ];
+    } catch (e) {
+      return [
+        'HDST60*90', 'MKST60*90', 'LVST60*90', 'LKST60*90K456',
+        'HDST50*75', 'MKST50*75', 'HDST20*30', 'MKST20*30',
+        'inepST20*30', 'inST20*30', 'inST60*90',
+        'NEPST1', 'NEPST2', 'NEPST3',
+        'ABMP20x20', 'ABMP20x30', 'ABMP30x30'
+      ];
+    }
+  });
+  const [quickInsertToast, setQuickInsertToast] = useState<string>('');
+
+  // Success alert state
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>('');
+  const [lastSavedOrder, setLastSavedOrder] = useState<Order | null>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
+        setShowCustomerDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // When customer changes, automatically update customer info & previous debt!
+  const handleSelectCustomer = (customer: Customer) => {
+    setSelectedCustomerId(customer.id);
+    setCustomerName(customer.name);
+    setCustomerPhone(customer.phone);
+    setCustomerAddress(customer.address || '');
+    setCustomerSearch(customer.name);
+    setShowCustomerDropdown(false);
+    if (customer.customerType) {
+      setCatalogCategory(customer.customerType);
+      setPopularTier(customer.customerType);
+    }
+
+    // Compute previous debt of this customer from previous orders
+    const pastOrders = allOrders
+      .filter(o => o.customerId === customer.id && o.status !== 'cancelled')
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || b.createdAt.localeCompare(a.createdAt));
+
+    if (pastOrders.length > 0) {
+      setPreviousDebt(pastOrders[0].totalDue);
+    } else {
+      setPreviousDebt(customer.initialDebt || 0);
+    }
+  };
+
+  // Auto-fill row when product code matches or is selected
+  const applyProductToRow = (rowIdx: number, product: Product) => {
+    setItems(prev => {
+      const next = [...prev];
+      const cur = next[rowIdx];
+      const qty = cur.quantity > 0 ? cur.quantity : 1;
+      const unitPrice = product.price;
+      next[rowIdx] = {
+        ...cur,
+        productCode: product.code,
+        productName: product.name,
+        size: product.size,
+        price: unitPrice,
+        quantity: qty,
+        amount: qty * unitPrice
+      };
+      return next;
+    });
+    setActiveCodeRowIdx(null);
+    setCodeQuery('');
+  };
+
+  // Quick-insert a popular product into the invoice table
+  const handleQuickInsertPopularProduct = (product: Product) => {
+    setItems(prev => {
+      // Look for the first empty row
+      const emptyIdx = prev.findIndex(r => !r.productCode.trim() && !r.productName.trim() && (!r.price || r.price === 0));
+
+      if (emptyIdx !== -1) {
+        const next = [...prev];
+        const cur = next[emptyIdx];
+        const qty = cur.quantity > 0 ? cur.quantity : 1;
+        const unitPrice = product.price;
+        next[emptyIdx] = {
+          ...cur,
+          productCode: product.code,
+          productName: product.name,
+          size: product.size,
+          price: unitPrice,
+          quantity: qty,
+          amount: qty * unitPrice
+        };
+        return next;
+      } else {
+        // Append a new row with this product
+        const newRow: OrderItem = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          date: orderDate,
+          productCode: product.code,
+          productName: product.name,
+          size: product.size,
+          price: product.price,
+          quantity: 1,
+          amount: product.price,
+          note: ''
+        };
+        return [...prev, newRow];
+      }
+    });
+
+    setQuickInsertToast(`+ Đã chèn mã [${product.code}] - ${product.name} (${formatCurrency(product.price)})`);
+    setTimeout(() => setQuickInsertToast(''), 3000);
+  };
+
+  // Kiểm tra sản phẩm có được đánh dấu ưa thích (⭐) hay không
+  const isProductFavorite = (prod: Product) => {
+    if (favoriteCodes.includes(prod.code)) return true;
+    const baseCode = convertProductCodeForTier(prod.code, 'GIÁ STUDIO');
+    return favoriteCodes.includes(baseCode);
+  };
+
+  // Đánh dấu hoặc bỏ đánh dấu sản phẩm ưa thích (⭐) - tự động lưu vào localStorage
+  const handleToggleProductFavorite = (prod: Product, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const baseCode = convertProductCodeForTier(prod.code, 'GIÁ STUDIO');
+    setFavoriteCodes(prev => {
+      const isFav = prev.includes(prod.code) || prev.includes(baseCode);
+      const next = isFav
+        ? prev.filter(c => c !== prod.code && c !== baseCode)
+        : [prod.code, baseCode, ...prev];
+      try {
+        localStorage.setItem('xuongin194_user_favorite_codes_v1', JSON.stringify(next));
+      } catch (err) {
+        console.error('Error saving favorites', err);
+      }
+      return next;
+    });
+  };
+
+  // Chọn sản phẩm từ modal bảng giá đưa vào hóa đơn bán hàng
+  const handleSelectProductFromCatalog = (product: Product) => {
+    setItems(prev => {
+      // Tìm dòng trống đầu tiên
+      const emptyIdx = prev.findIndex(r => !r.productCode.trim() && !r.productName.trim() && (!r.price || r.price === 0));
+      if (emptyIdx !== -1) {
+        const next = [...prev];
+        const cur = next[emptyIdx];
+        const qty = cur.quantity > 0 ? cur.quantity : 1;
+        next[emptyIdx] = {
+          ...cur,
+          productCode: product.code,
+          productName: product.name,
+          size: product.size,
+          price: product.price,
+          quantity: qty,
+          amount: qty * product.price
+        };
+        return next;
+      } else {
+        const newRow: OrderItem = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          date: orderDate,
+          productCode: product.code,
+          productName: product.name,
+          size: product.size,
+          price: product.price,
+          quantity: 1,
+          amount: product.price,
+          note: ''
+        };
+        return [...prev, newRow];
+      }
+    });
+
+    setQuickInsertToast(`+ Đã thêm [${product.code}] - ${product.name} (${formatCurrency(product.price)}) vào đơn hàng`);
+    setTimeout(() => setQuickInsertToast(''), 3000);
+  };
+
+  // Danh sách sản phẩm trong modal "Chọn nhanh từ bảng giá tiệm":
+  // CÁC SẢN PHẨM ĐƯỢC ĐÁNH DẤU ƯA THÍCH (⭐) SẼ TỰ ĐỘNG ĐƯỢC XẾP LÊN HÀNG ĐẦU!
+  const sortedCatalogProducts = useMemo(() => {
+    return products
+      .filter(p => {
+        if (catalogCategory !== 'all' && p.category !== catalogCategory) return false;
+        if (showOnlyFavorites && !isProductFavorite(p)) return false;
+        if (!catalogSearch.trim()) return true;
+        const q = catalogSearch.toLowerCase().trim();
+        return p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.size.toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const aFav = isProductFavorite(a);
+        const bFav = isProductFavorite(b);
+        // Sản phẩm ưa thích xếp lên hàng đầu tiên!
+        if (aFav && !bFav) return -1;
+        if (!aFav && bFav) return 1;
+        return 0;
+      });
+  }, [products, catalogCategory, catalogSearch, showOnlyFavorites, favoriteCodes]);
+
+  // Handle typing inside Mã số hàng (Product code)
+  const handleProductCodeChange = (rowIdx: number, val: string) => {
+    const upperVal = val.toUpperCase().trim();
+    setCodeQuery(val);
+    setActiveCodeRowIdx(rowIdx);
+
+    // Update row code immediately
+    setItems(prev => {
+      const next = [...prev];
+      const cur = next[rowIdx];
+      next[rowIdx] = { ...cur, productCode: upperVal };
+      return next;
+    });
+
+    // Check if there is an exact case-insensitive match
+    const exactMatch = products.find(p => p.code.toUpperCase() === upperVal);
+    if (exactMatch) {
+      applyProductToRow(rowIdx, exactMatch);
+    }
+  };
+
+  // Handle row field changes
+  const handleRowChange = (rowIdx: number, field: keyof OrderItem, val: any) => {
+    setItems(prev => {
+      const next = [...prev];
+      const row = { ...next[rowIdx], [field]: val };
+
+      // Recalculate amount if price or quantity changed
+      if (field === 'price' || field === 'quantity') {
+        const p = field === 'price' ? Number(val) || 0 : row.price;
+        const q = field === 'quantity' ? Number(val) || 0 : row.quantity;
+        row.amount = p * q;
+      }
+      next[rowIdx] = row;
+      return next;
+    });
+  };
+
+  // Add new empty row
+  const handleAddRow = () => {
+    const newRow: OrderItem = {
+      id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      date: orderDate,
+      productCode: '',
+      productName: '',
+      size: '',
+      price: 0,
+      quantity: 1,
+      amount: 0,
+      note: ''
+    };
+    setItems(prev => [...prev, newRow]);
+  };
+
+  // Remove row
+  const handleRemoveRow = (rowIdx: number) => {
+    if (items.length <= 1) {
+      // Keep at least one empty row
+      setItems([{
+        id: `row-${Date.now()}`,
+        date: orderDate,
+        productCode: '',
+        productName: '',
+        size: '',
+        price: 0,
+        quantity: 1,
+        amount: 0,
+        note: ''
+      }]);
+      return;
+    }
+    setItems(prev => prev.filter((_, idx) => idx !== rowIdx));
+  };
+
+  // Reset form to brand new
+  const handleResetForm = (showNotice: boolean = true) => {
+    setOrderDate(getTodayDateString());
+    setSelectedCustomerId('');
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerAddress('');
+    setCustomerSearch('');
+    setOrderNotes('');
+    setDiscount(0);
+    setPreviousDebt(0);
+    setPaid(0);
+    setManualMdfOverrides({});
+    setManualExtraMdfItems([]);
+    setExcludedSourceRowIds([]);
+    setItems([{
+      id: `row-${Date.now()}`,
+      date: getTodayDateString(),
+      productCode: '',
+      productName: '',
+      size: '',
+      price: 0,
+      quantity: 1,
+      amount: 0,
+      note: ''
+    }]);
+    if (showNotice) {
+      setSaveSuccessMsg('Đã tạo phiếu đơn hàng mới trắng thành công!');
+      setTimeout(() => setSaveSuccessMsg(''), 3000);
+    }
+  };
+
+  // Watch external newOrderTrigger from header
+  useEffect(() => {
+    if (newOrderTrigger && newOrderTrigger > 0) {
+      handleResetForm(true);
+    }
+  }, [newOrderTrigger]);
+
+  // Calculations
+  const subtotal = items.reduce((sum, item) => sum + (item.amount || 0), 0);
+  const totalDue = Math.max(0, subtotal - discount + previousDebt - paid);
+
+  // Live calculation of raw materials needed for this order
+  const bomRequirements = useMemo(() => {
+    const validItems = items.filter(it => it.quantity > 0 && (it.productCode.trim() !== '' || it.productName.trim() !== '' || it.amount > 0));
+    return calculateOrderBOM(validItems, materials, products);
+  }, [items, materials, products]);
+
+  // All MDF and Fomex materials available in warehouse inventory
+  const mdfMaterials = useMemo(() => {
+    return materials.filter(m => m.category === 'Gỗ MDF');
+  }, [materials]);
+
+  const fomexMaterials = useMemo(() => {
+    return materials.filter(m => m.category === 'Fomex siêu nhẹ');
+  }, [materials]);
+
+  const allBoardMaterials = useMemo(() => {
+    return materials.filter(m => m.category === 'Gỗ MDF' || m.category === 'Fomex siêu nhẹ');
+  }, [materials]);
+
+  // Compute live items for "Phiếu xuất ván MDF & Fomex"
+  const mdfSlipItems = useMemo(() => {
+    const list: {
+      id: string;
+      sourceRowId?: string;
+      sourceItemName: string;
+      size: string;
+      materialId: string;
+      materialCode: string;
+      materialName: string;
+      materialCategory: string;
+      unit: string;
+      quantity: number;
+      currentStock: number;
+      remainingStock: number;
+      isManual?: boolean;
+    }[] = [];
+
+    // 1. Scan valid invoice rows and map to required board (Fomex for 4K/HD+, MDF for other photos)
+    items.forEach((row, idx) => {
+      if (excludedSourceRowIds.includes(row.id)) return;
+      if (!row.quantity || row.quantity <= 0) return;
+      if (!row.productCode && !row.productName && !row.size && row.price <= 0) return;
+
+      const effectiveSize = extractEffectiveSize(row.size, row.productName, row.productCode);
+      const normSize = normalizeSize(effectiveSize);
+
+      const pName = (row.productName || '').toLowerCase().trim();
+      const pCode = (row.productCode || '').toLowerCase().trim();
+      const pNote = (row.note || '').toLowerCase().trim();
+      const fullText = `${pName} ${pCode} ${pNote}`;
+
+      // User lưu ý: In và In Ép không dùng cốt vật tư gỗ MDF / Fomex, bỏ trống không trừ ván!
+      const isNoCore =
+        pCode.startsWith('inst') ||
+        pCode.startsWith('infl') ||
+        pCode.startsWith('inkl') ||
+        pCode.startsWith('inepst') ||
+        pCode.startsWith('inepfl') ||
+        pCode.startsWith('inepkl') ||
+        pCode.startsWith('inep') ||
+        pCode === 'in' ||
+        pName.startsWith('in ảnh') ||
+        pName.startsWith('in ép') ||
+        pName === 'in';
+
+      if (isNoCore) {
+        return;
+      }
+
+      const is4K = fullText.includes('4k');
+      const isHDPlus =
+        fullText.includes('hd+') ||
+        fullText.includes('hd gương') ||
+        fullText.includes('hd plus') ||
+        fullText.includes('hd-plus') ||
+        fullText.includes('hd_plus') ||
+        fullText.includes('hd +') ||
+        pCode.startsWith('hd');
+
+      const isFomex = is4K || isHDPlus;
+      const targetCategory = isFomex ? 'Fomex siêu nhẹ' : 'Gỗ MDF';
+      const candidateMaterials = materials.filter(m => m.category === targetCategory);
+
+      let selectedMat: Material | undefined;
+      const override = manualMdfOverrides[row.id];
+
+      if (override?.materialId) {
+        selectedMat = materials.find(m => m.id === override.materialId);
+      }
+
+      if (!selectedMat) {
+        // Auto-match board material by size in candidate category
+        selectedMat = candidateMaterials.find(m => {
+          const normCode = normalizeSize(m.code);
+          const normName = normalizeSize(m.name);
+          return normSize && (normCode.includes(normSize) || normName.includes(normSize));
+        });
+        if (!selectedMat && effectiveSize) {
+          selectedMat = candidateMaterials.find(m => m.name.toLowerCase().includes(effectiveSize.toLowerCase()));
+        }
+        if (!selectedMat && candidateMaterials.length > 0) {
+          selectedMat = candidateMaterials[0];
+        }
+        if (!selectedMat && allBoardMaterials.length > 0) {
+          selectedMat = allBoardMaterials[0];
+        }
+      }
+
+      if (selectedMat) {
+        const qty = override?.quantity !== undefined ? override.quantity : row.quantity;
+        const currentStock = selectedMat.stockQuantity;
+        const remainingStock = Math.round((currentStock - qty) * 100) / 100;
+        const displayTitle = row.productName || row.productCode || `Ảnh dòng #${idx + 1}`;
+
+        list.push({
+          id: `slip-row-${row.id}`,
+          sourceRowId: row.id,
+          sourceItemName: displayTitle,
+          size: effectiveSize || row.size || 'Tiêu chuẩn',
+          materialId: selectedMat.id,
+          materialCode: selectedMat.code,
+          materialName: selectedMat.name,
+          materialCategory: selectedMat.category,
+          unit: selectedMat.unit || 'Tấm',
+          quantity: qty,
+          currentStock,
+          remainingStock,
+          isManual: false
+        });
+      }
+    });
+
+    // 2. Add manual extra MDF or Fomex items
+    manualExtraMdfItems.forEach((extra, idx) => {
+      const mat = materials.find(m => m.id === extra.materialId) || allBoardMaterials[0] || mdfMaterials[0];
+      if (mat) {
+        const remaining = Math.round((mat.stockQuantity - extra.quantity) * 100) / 100;
+        list.push({
+          id: extra.id,
+          sourceItemName: extra.note || `Ván/Fomex xuất thêm #${idx + 1}`,
+          size: extractEffectiveSize('', mat.name, mat.code) || 'Tùy chọn',
+          materialId: mat.id,
+          materialCode: mat.code,
+          materialName: mat.name,
+          materialCategory: mat.category,
+          unit: mat.unit || 'Tấm',
+          quantity: extra.quantity,
+          currentStock: mat.stockQuantity,
+          remainingStock: remaining,
+          isManual: true
+        });
+      }
+    });
+
+    return list;
+  }, [items, materials, mdfMaterials, fomexMaterials, allBoardMaterials, manualMdfOverrides, manualExtraMdfItems, excludedSourceRowIds]);
+
+  const totalMdfBoards = mdfSlipItems.reduce((sum, it) => sum + (it.quantity || 0), 0);
+
+  // MDF slip interaction handlers
+  const handleChangeMdfMaterial = (rowKey: string, newMatId: string) => {
+    if (rowKey.startsWith('slip-row-')) {
+      const sourceRowId = rowKey.replace('slip-row-', '');
+      setManualMdfOverrides(prev => ({
+        ...prev,
+        [sourceRowId]: { ...prev[sourceRowId], materialId: newMatId }
+      }));
+    } else {
+      setManualExtraMdfItems(prev => prev.map(item => item.id === rowKey ? { ...item, materialId: newMatId } : item));
+    }
+  };
+
+  const handleChangeMdfQuantity = (rowKey: string, newQty: number) => {
+    const qty = Math.max(1, newQty);
+    if (rowKey.startsWith('slip-row-')) {
+      const sourceRowId = rowKey.replace('slip-row-', '');
+      setManualMdfOverrides(prev => ({
+        ...prev,
+        [sourceRowId]: { ...prev[sourceRowId], quantity: qty }
+      }));
+    } else {
+      setManualExtraMdfItems(prev => prev.map(item => item.id === rowKey ? { ...item, quantity: qty } : item));
+    }
+  };
+
+  const handleRemoveMdfItem = (rowKey: string) => {
+    if (rowKey.startsWith('slip-row-')) {
+      const sourceRowId = rowKey.replace('slip-row-', '');
+      setExcludedSourceRowIds(prev => [...prev, sourceRowId]);
+    } else {
+      setManualExtraMdfItems(prev => prev.filter(item => item.id !== rowKey));
+    }
+  };
+
+  const handleAddManualMdfItem = () => {
+    const firstMat = mdfMaterials[0];
+    if (!firstMat) return;
+    const newExtra = {
+      id: `manual-mdf-${Date.now()}`,
+      materialId: firstMat.id,
+      quantity: 1,
+      note: 'Ván xuất thêm / cắt dưỡng'
+    };
+    setManualExtraMdfItems(prev => [...prev, newExtra]);
+  };
+
+  const handleResetMdfSlip = () => {
+    setManualMdfOverrides({});
+    setManualExtraMdfItems([]);
+    setExcludedSourceRowIds([]);
+  };
+
+  // Save order handler
+  const handleSave = (openPrint: boolean) => {
+    // Validate
+    const validItems = items.filter(it => it.productCode.trim() !== '' || it.productName.trim() !== '' || it.amount > 0);
+    if (validItems.length === 0) {
+      setSaveSuccessMsg('⚠️ Vui lòng nhập ít nhất 1 sản phẩm có mã hàng hoặc tên hàng trước khi lưu.');
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      return;
+    }
+
+    const orderNum = `194-${new Date(orderDate).getFullYear()}-${String(allOrders.length + 1).padStart(3, '0')}`;
+    const freshBOM = calculateOrderBOM(validItems, materials, products);
+
+    // Collect deductions from Phiếu xuất ván MDF
+    const mdfDeductions = autoDeductMdf
+      ? mdfSlipItems.map(it => ({
+          materialId: it.materialId,
+          materialCode: it.materialCode,
+          materialName: it.materialName,
+          unit: it.unit || 'Tấm',
+          quantity: it.quantity
+        }))
+      : [];
+
+    // Aggregate by materialId so duplicates sum together
+    const finalDeductions: {
+      materialId: string;
+      materialCode: string;
+      materialName: string;
+      unit: string;
+      quantity: number;
+    }[] = [];
+
+    mdfDeductions.forEach(item => {
+      const existing = finalDeductions.find(d => d.materialId === item.materialId);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        finalDeductions.push({ ...item });
+      }
+    });
+
+    const newOrder: Order = {
+      id: `ord-${Date.now()}`,
+      orderNumber: orderNum,
+      date: orderDate,
+      customerId: selectedCustomerId || `cust-${Date.now()}`,
+      customerName: customerName.trim() || 'Khách Vãng Lai / Lẻ',
+      customerPhone: customerPhone.trim() || '',
+      customerAddress: customerAddress.trim() || '',
+      items: validItems,
+      subtotal,
+      discount,
+      previousDebt,
+      paid,
+      totalDue,
+      status: orderStatus,
+      materialsDeducted: finalDeductions,
+      notes: orderNotes.trim(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    onSaveOrder(newOrder, openPrint);
+    setLastSavedOrder(newOrder);
+    setSaveSuccessMsg(`Đã lưu đơn hàng #${orderNum} thành công!${totalMdfBoards > 0 ? ` (Phiếu xuất: đã trừ ${totalMdfBoards} tấm cốt Ván MDF / Fomex trong Kho Vật Tư)` : ''}`);
+  };
+
+  // Quick Customer Creation
+  const handleSaveQuickCustomer = () => {
+    if (!newCustName.trim()) {
+      return;
+    }
+    const newCustomer: Customer = {
+      id: `c-${Date.now()}`,
+      name: newCustName.trim(),
+      phone: newCustPhone.trim(),
+      address: newCustAddress.trim(),
+      customerType: newCustType,
+      initialDebt: newCustInitialDebt || 0,
+      createdAt: getTodayDateString()
+    };
+    onAddNewCustomer(newCustomer);
+    handleSelectCustomer(newCustomer);
+    setShowQuickCustomerModal(false);
+    setNewCustName('');
+    setNewCustPhone('');
+    setNewCustAddress('');
+    setNewCustType('GIÁ STUDIO');
+    setNewCustInitialDebt(0);
+  };
+
+  // Filtered products for active code auto-fill popup (ưu tiên phân khúc giá hiện tại & sản phẩm ưa thích ⭐ lên hàng đầu)
+  const filteredProducts = useMemo(() => {
+    const tierProducts = products.filter(p => p.category === popularTier);
+    const pool = tierProducts.length > 0 ? tierProducts : products;
+
+    let results: Product[] = [];
+    if (!codeQuery.trim()) {
+      results = pool.slice(0, 20);
+    } else {
+      const q = codeQuery.toLowerCase().trim();
+      const matchedInTier = pool.filter(p => p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.size.toLowerCase().includes(q));
+      if (matchedInTier.length > 0) {
+        results = matchedInTier.slice(0, 20);
+      } else {
+        results = products.filter(p => p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.size.toLowerCase().includes(q)).slice(0, 20);
+      }
+    }
+
+    return results.sort((a, b) => {
+      const aFav = isProductFavorite(a);
+      const bFav = isProductFavorite(b);
+      if (aFav && !bFav) return -1;
+      if (!aFav && bFav) return 1;
+      return 0;
+    });
+  }, [products, popularTier, codeQuery, favoriteCodes]);
+
+  // Filtered customer list for customer dropdown
+  const filteredCustomers = customers.filter(c => {
+    if (!customerSearch) return true;
+    const q = customerSearch.toLowerCase();
+    return c.name.toLowerCase().includes(q) || c.phone.includes(q) || (c.studioName && c.studioName.toLowerCase().includes(q));
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Top Banner & Quick Feedback */}
+      {saveSuccessMsg && (
+        <div className="p-3 sm:p-4 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <div>
+              <span className="font-extrabold text-sm">{saveSuccessMsg}</span>
+              <p className="text-xs text-emerald-700">Đơn hàng đã được lưu vào hệ thống dữ liệu tiệm.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {lastSavedOrder && (
+              <button
+                type="button"
+                onClick={() => onSaveOrder(lastSavedOrder, true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                In & Xuất Phiếu Hóa Đơn
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                handleResetForm(true);
+                setSaveSuccessMsg('');
+              }}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-bold text-xs cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 text-amber-600" />
+              Tạo đơn mới
+            </button>
+            <button
+              type="button"
+              onClick={() => setSaveSuccessMsg('')}
+              className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Order Card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+        {/* Card Header / Title */}
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-black text-xl shadow-md">
+              194
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold tracking-tight text-white">TẠO ĐƠN HÀNG & PHIẾU BÁN HÀNG</h2>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  Tự động điền theo Mã SP
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Nhập mã hàng (VD: <span className="text-amber-400 font-mono font-medium">EG1015, TG6090, PL2030</span>) hệ thống tự động điền Tên, Kích thước, Đơn giá
+              </p>
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleResetForm(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+              title="Khởi tạo đơn hàng mới trắng"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Tạo đơn mới
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedCustomerId) {
+                  const cust = customers.find(c => c.id === selectedCustomerId);
+                  if (cust?.customerType) setCatalogCategory(cust.customerType);
+                }
+                setShowCatalogModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold transition shadow-xs cursor-pointer"
+              title="Mở bảng giá tiệm: các sản phẩm ưa thích sẽ luôn xếp ở hàng đầu để chọn nhanh"
+            >
+              <Zap className="w-3.5 h-3.5 fill-slate-950" />
+              <span>Chọn nhanh từ bảng giá tiệm</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Customer & General Order Info Form */}
+        <div className="p-4 sm:p-5 bg-slate-50/70 border-b border-slate-200">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+            {/* Customer Selector / Search */}
+            <div className="md:col-span-5 relative" ref={customerDropdownRef}>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                  <span>Khách hàng / Studio</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowQuickCustomerModal(true)}
+                  className="text-[11px] text-amber-600 hover:text-amber-700 font-semibold flex items-center gap-0.5 cursor-pointer"
+                >
+                  <UserPlus className="w-3 h-3" />
+                  + Tạo khách mới
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={customerSearch || customerName}
+                  onChange={(e) => {
+                    setCustomerSearch(e.target.value);
+                    setCustomerName(e.target.value);
+                    setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  placeholder="Gõ tên Studio, thợ ảnh hoặc khách lẻ..."
+                  className="w-full pl-3 pr-8 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs"
+                />
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
+              </div>
+
+              {/* Customer Dropdown */}
+              {showCustomerDropdown && (
+                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 max-h-60 overflow-y-auto divide-y divide-slate-100">
+                  {filteredCustomers.length > 0 ? (
+                    filteredCustomers.map(cust => (
+                      <button
+                        key={cust.id}
+                        type="button"
+                        onClick={() => handleSelectCustomer(cust)}
+                        className="w-full text-left p-2.5 hover:bg-amber-50/60 transition flex items-center justify-between group cursor-pointer"
+                      >
+                        <div>
+                          <p className="font-semibold text-xs text-slate-900 group-hover:text-amber-700">
+                            {cust.name} {cust.studioName ? `(${cust.studioName})` : ''}
+                          </p>
+                          <p className="text-[11px] text-slate-500">{cust.phone} • {cust.address || 'Hà Nội'}</p>
+                        </div>
+                        {cust.initialDebt > 0 && (
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-semibold">
+                            Nợ: {formatCurrency(cust.initialDebt)}
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-3 text-center text-xs text-slate-500">
+                      Không tìm thấy. Bạn có thể nhập trực tiếp tên khách này!
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Phone */}
+            <div className="md:col-span-3">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Số điện thoại
+              </label>
+              <input
+                type="text"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                placeholder="0988 123 456"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs"
+              />
+            </div>
+
+            {/* Order Date */}
+            <div className="md:col-span-4">
+              <label className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                <span>Ngày lập đơn</span>
+              </label>
+              <input
+                type="date"
+                value={orderDate}
+                onChange={(e) => {
+                  setOrderDate(e.target.value);
+                  setItems(prev => prev.map(it => ({ ...it, date: e.target.value })));
+                }}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Insert Toast Message if active */}
+        {quickInsertToast && (
+          <div className="mx-4 my-2 p-2.5 bg-emerald-100 border border-emerald-300 rounded-xl text-emerald-900 text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{quickInsertToast}</span>
+            </div>
+            <button onClick={() => setQuickInsertToast('')} className="text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Sales Table with clean header */}
+        <div className="border-t border-slate-200">
+          <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
+                <FileText className="w-3.5 h-3.5 text-amber-600" />
+                <span>CHI TIẾT HÀNG HÓA TRONG ĐƠN</span>
+              </span>
+              <span className="text-[11px] text-slate-500 hidden md:inline">
+                ({items.filter(it => it.productCode || it.productName).length} mặt hàng)
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedCustomerId) {
+                    const cust = customers.find(c => c.id === selectedCustomerId);
+                    if (cust?.customerType) setCatalogCategory(cust.customerType);
+                  }
+                  setShowCatalogModal(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg shadow-2xs transition cursor-pointer"
+                title="Mở bảng giá tiệm: các sản phẩm ưa thích bạn đánh dấu sẽ luôn lên hàng đầu"
+              >
+                <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                <span>Chọn nhanh từ bảng giá tiệm</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleAddRow}
+                className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-semibold rounded-lg shadow-2xs transition cursor-pointer"
+              >
+                <Plus className="w-3 h-3 text-amber-600" />
+                <span>+ Thêm dòng</span>
+              </button>
+            </div>
+          </div>
+
+        {/* Sales Table with required columns */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-100/90 text-slate-800 font-bold border-b border-slate-200">
+                <th className="py-2.5 px-2.5 text-center w-10">STT</th>
+                <th className="py-2.5 px-3 text-center w-28">
+                  <span className="flex items-center justify-center gap-1">
+                    <Calendar className="w-3 h-3 text-slate-500" />
+                    Ngày tháng
+                  </span>
+                </th>
+                <th className="py-2.5 px-3 w-36">
+                  <span className="flex items-center gap-1 text-amber-700">
+                    <Hash className="w-3.5 h-3.5" />
+                    Mã số hàng *
+                  </span>
+                </th>
+                <th className="py-2.5 px-3 min-w-[200px]">
+                  Tên hàng (Tự động điền)
+                </th>
+                <th className="py-2.5 px-3 text-center w-28">
+                  Kích thước
+                </th>
+                <th className="py-2.5 px-3 text-right w-28">
+                  Giá tiền (đ)
+                </th>
+                <th className="py-2.5 px-2 text-center w-18">
+                  Số lượng
+                </th>
+                <th className="py-2.5 px-3 text-right w-32">
+                  Thành tiền
+                </th>
+                <th className="py-2.5 px-3 min-w-[140px]">
+                  Ghi chú yêu cầu
+                </th>
+                <th className="py-2.5 px-2 text-center w-10"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {items.map((row, idx) => (
+                <tr key={row.id} className="hover:bg-amber-50/20 group transition-colors">
+                  {/* STT */}
+                  <td className="py-2 px-2.5 text-center text-slate-400 font-mono font-medium">
+                    {idx + 1}
+                  </td>
+
+                  {/* 1. CỘT NGÀY THÁNG */}
+                  <td className="py-2 px-2 text-center">
+                    <input
+                      type="date"
+                      value={row.date || orderDate}
+                      onChange={(e) => handleRowChange(idx, 'date', e.target.value)}
+                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-mono text-[11px] focus:bg-white focus:border-amber-500 outline-hidden"
+                    />
+                  </td>
+
+                  {/* 2. CỘT MÃ SỐ HÀNG (Tự động điền giá, tên hàng, kích thước khi nhập) */}
+                  <td className="py-2 px-2 relative">
+                    <input
+                      type="text"
+                      value={row.productCode}
+                      onChange={(e) => handleProductCodeChange(idx, e.target.value)}
+                      onFocus={() => {
+                        setActiveCodeRowIdx(idx);
+                        setCodeQuery(row.productCode);
+                      }}
+                      placeholder="VD: EG1015, HDST60*90..."
+                      className="w-full px-2.5 py-1.5 bg-amber-50/40 border border-amber-300 font-mono font-bold text-amber-900 uppercase rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden placeholder:text-slate-400"
+                    />
+
+                    {/* Autocomplete Popup when typing product code */}
+                    {activeCodeRowIdx === idx && (
+                      <div className="absolute left-0 top-full mt-1 bg-white border border-slate-300 rounded-xl shadow-2xl z-40 w-80 max-h-72 overflow-y-auto divide-y divide-slate-100">
+                        <div className="p-2 bg-slate-900 text-white text-[10px] font-bold flex items-center justify-between sticky top-0 z-10">
+                          <span className="flex items-center gap-1">
+                            <Zap className="w-3 h-3 text-amber-400" />
+                            GỢI Ý MÃ SẢN PHẨM
+                          </span>
+                          <span className="text-amber-400 font-mono">{filteredProducts.length} mã</span>
+                        </div>
+
+                        <div className="divide-y divide-slate-100">
+                          {filteredProducts.map(p => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onMouseDown={() => applyProductToRow(idx, p)}
+                              className="w-full text-left p-2 hover:bg-amber-100/70 transition flex items-center justify-between cursor-pointer"
+                            >
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-xs text-amber-800 bg-amber-100 px-1 rounded">
+                                    {p.code}
+                                  </span>
+                                  <span className="text-xs font-semibold text-slate-800">{p.size}</span>
+                                  {isProductFavorite(p) && (
+                                    <span className="text-[9px] text-amber-700 bg-amber-100 px-1 rounded font-bold">⭐ Ưa thích</span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-600 truncate max-w-[190px]">{p.name}</p>
+                              </div>
+                              <span className="font-mono font-semibold text-xs text-emerald-700 shrink-0">
+                                {formatCurrency(p.price)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {filteredProducts.length === 0 && (
+                          <div className="p-3 text-center text-xs text-slate-500">
+                            Không có mã khớp. Bạn có thể tự gõ tên và giá trực tiếp!
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+
+                  {/* 3. CỘT TÊN HÀNG */}
+                  <td className="py-2 px-2">
+                    <input
+                      type="text"
+                      value={row.productName}
+                      onChange={(e) => handleRowChange(idx, 'productName', e.target.value)}
+                      placeholder="Tên sản phẩm in ảnh..."
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden"
+                    />
+                    {(() => {
+                      const rowBOM = calculateItemBOM(row, materials, products);
+                      if (rowBOM.length === 0) {
+                        const code = (row.productCode || '').toLowerCase().trim();
+                        const name = (row.productName || '').toLowerCase().trim();
+                        const isNoCore =
+                          code.startsWith('inep') ||
+                          code.startsWith('inst') ||
+                          code.startsWith('infl') ||
+                          code.startsWith('inkl') ||
+                          name.startsWith('in ảnh') ||
+                          name.startsWith('in ép') ||
+                          (code.startsWith('in') && !code.startsWith('hd') && !code.startsWith('mk') && !code.startsWith('lv'));
+                        if (isNoCore && (row.productCode || row.productName)) {
+                          return (
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="text-[9px] text-slate-400 italic">
+                                — Không dùng cốt ván (bỏ trống)
+                              </span>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }
+                      return (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-900 bg-amber-100/90 border border-amber-300/80 px-1 py-0.2 rounded-sm shrink-0">
+                            <Boxes className="w-2.5 h-2.5 text-amber-700" />
+                            <span>Vật tư:</span>
+                          </span>
+                          {rowBOM.map((b, bIdx) => (
+                            <span
+                              key={bIdx}
+                              className="inline-flex items-center gap-0.5 text-[9px] text-slate-700 bg-slate-100 border border-slate-200 px-1 py-0.2 rounded-sm"
+                              title={b.reason}
+                            >
+                              <strong>{b.quantity}</strong> {b.material.unit} {b.material.name}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </td>
+
+                  {/* 4. CỘT KÍCH THƯỚC */}
+                  <td className="py-2 px-2 text-center">
+                    <input
+                      type="text"
+                      value={row.size}
+                      onChange={(e) => handleRowChange(idx, 'size', e.target.value)}
+                      placeholder="VD: 60x90"
+                      className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden"
+                    />
+                  </td>
+
+                  {/* 5. CỘT GIÁ TIỀN */}
+                  <td className="py-2 px-2 text-right">
+                    <input
+                      type="number"
+                      value={row.price || ''}
+                      onChange={(e) => handleRowChange(idx, 'price', Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono font-semibold text-right text-slate-800 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden"
+                    />
+                  </td>
+
+                  {/* SỐ LƯỢNG */}
+                  <td className="py-2 px-1 text-center">
+                    <input
+                      type="number"
+                      min="1"
+                      value={row.quantity || ''}
+                      onChange={(e) => handleRowChange(idx, 'quantity', Number(e.target.value))}
+                      className="w-14 px-1.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:ring-2 focus:ring-amber-500 outline-hidden"
+                    />
+                  </td>
+
+                  {/* 6. CỘT THÀNH TIỀN (Tự động tính) */}
+                  <td className="py-2 px-3 text-right">
+                    <span className="font-mono font-extrabold text-xs text-slate-900 bg-slate-100 px-2 py-1 rounded-md inline-block">
+                      {formatCurrency(row.amount)}
+                    </span>
+                  </td>
+
+                  {/* GHI CHÚ */}
+                  <td className="py-2 px-2">
+                    <input
+                      type="text"
+                      value={row.note || ''}
+                      onChange={(e) => handleRowChange(idx, 'note', e.target.value)}
+                      placeholder="Yêu cầu riêng (bo viền, ép mờ...)"
+                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-600 focus:border-amber-500 outline-hidden"
+                    />
+                  </td>
+
+                  {/* XÓA DÒNG */}
+                  <td className="py-2 px-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRow(idx)}
+                      className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition cursor-pointer"
+                      title="Xóa dòng này"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Add row actions bar */}
+        <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAddRow}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-amber-400" />
+              Thêm dòng hàng mới
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCatalogModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-amber-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              Chọn nhanh từ bảng giá tiệm
+            </button>
+          </div>
+          <span className="text-xs text-slate-500 font-medium">
+            Số dòng hàng: <strong className="text-slate-800">{items.length}</strong>
+          </span>
+        </div>
+
+        {/* Bottom Section: Side-by-side balanced cards (Phiếu xuất ván MDF + Tổng kết thanh toán) */}
+        <div className="p-4 sm:p-6 bg-slate-50/80 border-t border-slate-200">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+
+            {/* CỬA SỔ 1: PHIẾU XUẤT VÁN MDF */}
+            <div className="lg:col-span-7 bg-slate-900 text-white p-4 sm:p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between space-y-3.5">
+              <div className="space-y-3">
+                {/* Header */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
+                      <Boxes className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                        <span>Phiếu xuất ván mdf & fomex</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-semibold lowercase">
+                          kho vật tư
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Định mức Ván MDF & Fomex siêu nhẹ 9li (Ảnh 4K & HD Pro) • Liên kết trừ kho khi lưu đơn
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-mono font-black bg-amber-500 text-slate-950 shadow-xs">
+                      Tổng: {totalMdfBoards} tấm
+                    </span>
+                  </div>
+                </div>
+
+                {/* Items in Slip */}
+                {mdfSlipItems.length > 0 ? (
+                  <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1 [scrollbar-width:thin]">
+                    {mdfSlipItems.map((item, idx) => {
+                      const isOut = item.remainingStock < 0;
+                      const isLow = item.remainingStock >= 0 && item.remainingStock <= 8;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`p-3 rounded-xl border text-xs space-y-2 transition ${
+                            isOut
+                              ? 'bg-rose-950/40 border-rose-700/60'
+                              : 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600'
+                          }`}
+                        >
+                          {/* Row context & title */}
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">
+                                #{idx + 1}
+                              </span>
+                              <span className="font-bold text-slate-200 truncate max-w-[220px] sm:max-w-xs" title={item.sourceItemName}>
+                                {item.sourceItemName}
+                              </span>
+                              {item.size && (
+                                <span className="px-1.5 py-0.2 rounded bg-slate-700/90 text-amber-200 font-mono text-[10px] font-semibold border border-slate-600/60">
+                                  Khổ ảnh: {item.size}
+                                </span>
+                              )}
+                              {item.materialCategory === 'Fomex siêu nhẹ' ? (
+                                <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-mono text-[10px] font-bold border border-blue-500/40">
+                                  🪶 Fomex 9li (4K/HD Pro)
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono text-[10px] font-bold border border-amber-500/40">
+                                  🪵 Ván MDF
+                                </span>
+                              )}
+                              {item.isManual && (
+                                <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
+                                  Thủ công
+                                </span>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMdfItem(item.id)}
+                              className="text-slate-400 hover:text-rose-400 p-1 rounded-md hover:bg-slate-700/50 transition cursor-pointer"
+                              title="Bỏ dòng xuất ván này"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Board selector & Quantity */}
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                            <div className="sm:col-span-8">
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                Loại cốt ván MDF / Fomex & Mã vật tư trong kho:
+                              </label>
+                              <select
+                                value={item.materialId}
+                                onChange={(e) => handleChangeMdfMaterial(item.id, e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-semibold text-amber-200 focus:border-amber-400 outline-hidden cursor-pointer"
+                              >
+                                {fomexMaterials.length > 0 && (
+                                  <optgroup label="─── TẤM FOMEX SIÊU NHẸ (Ảnh 4K & HD+) ───">
+                                    {fomexMaterials.map(mat => (
+                                      <option key={mat.id} value={mat.id}>
+                                        [{mat.code}] {mat.name} (Tồn: {mat.stockQuantity} {mat.unit})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {mdfMaterials.length > 0 && (
+                                  <optgroup label="─── TẤM VÁN MDF (Ảnh Khác) ───">
+                                    {mdfMaterials.map(mat => (
+                                      <option key={mat.id} value={mat.id}>
+                                        [{mat.code}] {mat.name} (Tồn: {mat.stockQuantity} {mat.unit})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </select>
+                            </div>
+
+                            <div className="sm:col-span-4">
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                Số lượng ván dùng:
+                              </label>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleChangeMdfQuantity(item.id, item.quantity - 1)}
+                                  className="w-7 h-7 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold cursor-pointer transition text-xs"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity || ''}
+                                  onChange={(e) => handleChangeMdfQuantity(item.id, parseInt(e.target.value, 10) || 1)}
+                                  className="w-14 px-1 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-black text-center text-white focus:border-amber-400 outline-hidden"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleChangeMdfQuantity(item.id, item.quantity + 1)}
+                                  className="w-7 h-7 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold cursor-pointer transition text-xs"
+                                >
+                                  +
+                                </button>
+                                <span className="text-xs text-slate-300 font-medium">tấm</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Inventory Status Bar */}
+                          <div className="flex flex-wrap items-center justify-between text-[11px] pt-1.5 border-t border-slate-700/60 font-mono gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-400">
+                                Tồn kho hiện có: <strong className="text-slate-200">{item.currentStock}</strong> tấm
+                              </span>
+                              <span>➔</span>
+                              <span className="text-slate-400">
+                                Sau đơn: <strong className={isOut ? 'text-rose-400 font-bold' : isLow ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{item.remainingStock}</strong> tấm
+                              </span>
+                            </div>
+
+                            {isOut ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-sans font-semibold">
+                                ⚠️ Kho không đủ ván
+                              </span>
+                            ) : isLow ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-sans font-semibold">
+                                Cảnh báo sắp hết ván
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-emerald-400 font-sans flex items-center gap-1 font-semibold">
+                                <Check className="w-3.5 h-3.5 text-emerald-400" /> Tồn kho đủ xuất
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-8 px-4 text-center rounded-xl bg-slate-800/40 border border-dashed border-slate-700/80 text-xs text-slate-400 space-y-2">
+                    <Boxes className="w-8 h-8 text-slate-600 mx-auto" />
+                    <p className="font-semibold text-slate-300">Chưa có dòng ảnh nào cần xuất ván MDF.</p>
+                    <p className="text-[11px] text-slate-500">
+                      Nhập sản phẩm in ảnh (60x90, 50x75, 20x30...) vào bảng hàng bên trên, hệ thống sẽ tự động bóc tách ván tương ứng!
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Bottom Slip Actions */}
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddManualMdfItem}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-amber-400" />
+                      + Thêm ván xuất thủ công
+                    </button>
+                    {(Object.keys(manualMdfOverrides).length > 0 || manualExtraMdfItems.length > 0 || excludedSourceRowIds.length > 0) && (
+                      <button
+                        type="button"
+                        onClick={handleResetMdfSlip}
+                        className="px-2 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 text-xs transition cursor-pointer flex items-center gap-1"
+                        title="Nạp lại theo các dòng trong hóa đơn"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Nạp lại
+                      </button>
+                    )}
+                  </div>
+
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={autoDeductMdf}
+                      onChange={(e) => setAutoDeductMdf(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded text-amber-500 focus:ring-amber-500 cursor-pointer"
+                    />
+                    <span className="font-medium">Tự động trừ số ván trên ở Kho Vật Tư khi lưu</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* CỬA SỔ 2: TỔNG KẾT THANH TOÁN ĐƠN HÀNG */}
+            <div className="lg:col-span-5 bg-slate-900 text-white p-4 sm:p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between space-y-3">
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 pb-1 border-b border-slate-800">
+                  TỔNG KẾT THANH TOÁN ĐƠN HÀNG
+                </h3>
+
+                {/* 1. TỔNG TIỀN (Hàng hóa) */}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-300 font-medium">1. Tổng tiền hàng:</span>
+                  <span className="font-mono text-base font-bold text-white">
+                    {formatCurrency(subtotal)}
+                  </span>
+                </div>
+
+                {/* Giảm giá chiết khấu */}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Chiết khấu / Giảm giá:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-emerald-400 font-mono">-</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={discount ? discount.toLocaleString('en-US') : (discount === 0 ? '0' : '')}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        setDiscount(digits ? parseInt(digits, 10) : 0);
+                      }}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
+                      placeholder="0"
+                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-700 rounded-lg text-xs font-mono text-right text-emerald-400 focus:border-amber-500 outline-hidden"
+                    />
+                    <span className="text-slate-400 font-mono">₫</span>
+                  </div>
+                </div>
+
+                {/* 2. NỢ CŨ */}
+                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-800">
+                  <div>
+                    <span className="text-amber-300 font-bold">2. Nợ cũ:</span>
+                    <span className="text-[11px] text-slate-400 ml-1.5">(Tự nạp theo khách)</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-300 font-mono">+</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={previousDebt ? previousDebt.toLocaleString('en-US') : (previousDebt === 0 ? '0' : '')}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        setPreviousDebt(digits ? parseInt(digits, 10) : 0);
+                      }}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
+                      placeholder="0"
+                      className="w-32 px-2.5 py-1.5 bg-slate-800 border border-amber-500/50 rounded-lg text-sm font-mono font-bold text-right text-amber-300 focus:border-amber-400 outline-hidden"
+                    />
+                    <span className="text-amber-400 font-mono">₫</span>
+                  </div>
+                </div>
+
+                {/* Khách đã trả / Tạm ứng */}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Khách đã thanh toán / Tạm ứng:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-blue-400 font-mono">-</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={paid ? paid.toLocaleString('en-US') : (paid === 0 ? '0' : '')}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        setPaid(digits ? parseInt(digits, 10) : 0);
+                      }}
+                      onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
+                      placeholder="0"
+                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-700 rounded-lg text-xs font-mono text-right text-blue-400 focus:border-amber-500 outline-hidden"
+                    />
+                    <span className="text-slate-400 font-mono">₫</span>
+                  </div>
+                </div>
+
+                {/* 3. CẦN THANH TOÁN */}
+                <div className="pt-2.5 border-t-2 border-amber-500 flex items-center justify-between bg-gradient-to-r from-amber-500/10 to-transparent p-2 rounded-xl">
+                  <div>
+                    <p className="text-xs uppercase font-extrabold text-amber-400 tracking-wider">
+                      3. CẦN THANH TOÁN
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      (= Tổng tiền - Giảm giá + Nợ cũ - Đã trả)
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-2xl font-black text-amber-400 drop-shadow-xs">
+                      {formatCurrency(totalDue)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bằng chữ tiếng Việt */}
+                <div className="text-[11px] text-slate-300 italic bg-slate-800/80 p-2 rounded-lg border border-slate-700">
+                  <span className="text-amber-400 font-semibold not-italic">Bằng chữ: </span>
+                  {numberToVietnameseWords(totalDue)}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 space-y-2 border-t border-slate-800">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSave(true)}
+                    className="flex flex-col items-center justify-center py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/20 transition cursor-pointer"
+                    title="Lưu đơn và mở cửa sổ in khổ A4/A5 hoặc xuất file ảnh JPG 3840 x 2160 px gửi khách"
+                  >
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Printer className="w-4 h-4" />
+                      <span>LƯU & IN PHIẾU</span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-slate-900/80">(Xuất Phiếu • In A4/A5)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSave(false)}
+                    className="flex flex-col items-center justify-center py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md transition cursor-pointer"
+                    title="Lưu đơn hàng vào hệ thống"
+                  >
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Save className="w-4 h-4" />
+                      <span>LƯU ĐƠN HÀNG</span>
+                    </div>
+                    <span className="text-[10px] font-normal text-emerald-100">(Lưu vào sổ đơn)</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleResetForm(true)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  + TẠO ĐƠN MỚI (LÀM TRẮNG BẢNG ĐỂ BÁN ĐƠN TIẾP THEO)
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+      {/* Modal Chọn Nhanh Từ Bảng Giá Tiệm */}
+      {showCatalogModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+            {/* Modal Header */}
+            <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 bg-amber-500 text-slate-950 rounded-xl shadow-xs">
+                  <Zap className="w-5 h-5 fill-slate-950" />
+                </span>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-2">
+                    <span>CHỌN NHANH TỪ BẢNG GIÁ TIỆM IN 194</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black">
+                      ⭐ {products.filter(p => isProductFavorite(p)).length} mã ưa thích
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Bấm vào sản phẩm để thêm vào hóa đơn • Bấm ngôi sao <strong className="text-amber-400">⭐</strong> để đánh dấu ưa thích (sản phẩm ưa thích sẽ luôn tự động lên hàng đầu)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCatalogModal(false)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                title="Đóng (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Toolbar: Search & Category Tabs */}
+            <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2.5 shrink-0">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                {/* Search Input */}
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={catalogSearch}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
+                    placeholder="Tìm theo mã sản phẩm (HDST, LK, NEP, in...), tên hoặc kích thước (60x90, 20x30)..."
+                    className="w-full pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 outline-hidden"
+                  />
+                  {catalogSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCatalogSearch('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Only Favorites Quick Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyFavorites(prev => !prev)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                    showOnlyFavorites
+                      ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-400'
+                      : 'bg-white hover:bg-amber-50 text-slate-700 border border-slate-300'
+                  }`}
+                  title="Chỉ hiển thị các sản phẩm bạn đã bấm sao ⭐ ưa thích"
+                >
+                  <Star className={`w-3.5 h-3.5 ${showOnlyFavorites ? 'fill-slate-950 text-slate-950' : 'text-amber-500 fill-amber-400'}`} />
+                  <span>Chỉ xem mã Ưa thích ({products.filter(p => isProductFavorite(p)).length})</span>
+                </button>
+              </div>
+
+              {/* Price Tier Category Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
+                {[
+                  { id: 'all', label: `Tất cả bảng giá (${products.length})` },
+                  { id: 'GIÁ STUDIO', label: `🏢 1. GIÁ STUDIO (${products.filter(p => p.category === 'GIÁ STUDIO').length})` },
+                  { id: 'Freelance', label: `📸 2. Freelance (${products.filter(p => p.category === 'Freelance').length})` },
+                  { id: 'Khách Lẻ', label: `👤 3. Khách Lẻ (${products.filter(p => p.category === 'Khách Lẻ').length})` },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setCatalogCategory(tab.id)}
+                    className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer ${
+                      catalogCategory === tab.id
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-white hover:bg-slate-200 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Body: Product Grid with Favorites at the Very Top */}
+            <div className="p-3 sm:p-4 overflow-y-auto max-h-[60vh] flex-1 bg-slate-100/60">
+              {sortedCatalogProducts.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                  {sortedCatalogProducts.map(product => {
+                    const isFav = isProductFavorite(product);
+
+                    return (
+                      <div
+                        key={product.id}
+                        onClick={() => handleSelectProductFromCatalog(product)}
+                        className={`rounded-xl p-3 border transition flex flex-col justify-between cursor-pointer group relative ${
+                          isFav
+                            ? 'bg-amber-50/70 border-amber-400 shadow-2xs hover:border-amber-500 hover:shadow-xs hover:bg-amber-100/50'
+                            : 'bg-white border-slate-200 hover:border-amber-300 hover:shadow-2xs hover:bg-amber-50/20'
+                        }`}
+                      >
+                        {/* Header: Star button & Code & Size */}
+                        <div>
+                          <div className="flex items-start justify-between gap-1 mb-1.5">
+                            <span className="font-mono font-black text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300">
+                              {product.code}
+                            </span>
+
+                            <div className="flex items-center gap-1">
+                              {isFav && (
+                                <span className="text-[10px] font-black text-amber-800 bg-amber-200/70 px-1.5 py-0.2 rounded border border-amber-300">
+                                  ⭐ Ưa thích
+                                </span>
+                              )}
+                              {/* Star Toggle Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleToggleProductFavorite(product, e)}
+                                className="p-1 rounded-md hover:bg-amber-200/60 transition cursor-pointer"
+                                title={isFav ? "Bỏ đánh dấu ưa thích" : "Đánh dấu sản phẩm ưa thích (sẽ luôn lên hàng đầu)"}
+                              >
+                                <Star
+                                  className={`w-4 h-4 transition ${
+                                    isFav
+                                      ? 'text-amber-500 fill-amber-400'
+                                      : 'text-slate-300 group-hover:text-amber-400'
+                                  }`}
+                                />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Product Name & Dimensions */}
+                          <p className="font-bold text-xs text-slate-900 group-hover:text-amber-900 line-clamp-1" title={product.name}>
+                            {product.name}
+                          </p>
+
+                          <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-500">
+                            <span className="bg-slate-100 font-semibold px-1.5 py-0.2 rounded text-slate-700">
+                              Khổ: {product.size}
+                            </span>
+                            <span>•</span>
+                            <span className="truncate">
+                              {product.category === 'GIÁ STUDIO' ? 'Studio' : product.category === 'Freelance' ? 'Freelance' : 'Khách Lẻ'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Price & Add Button */}
+                        <div className="pt-2 mt-2 border-t border-slate-200/80 flex items-center justify-between">
+                          <span className="font-mono font-extrabold text-xs text-emerald-700">
+                            {formatCurrency(product.price)}
+                          </span>
+
+                          <span className="text-[11px] font-bold text-amber-600 group-hover:text-slate-950 group-hover:bg-amber-400 bg-amber-100 px-2 py-0.5 rounded-lg transition shadow-2xs">
+                            + Thêm
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
+                  <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-700">Không tìm thấy sản phẩm nào phù hợp bộ lọc.</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Hãy thử tìm từ khóa khác hoặc tắt bộ lọc "Chỉ xem mã Ưa thích".</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogSearch('');
+                      setShowOnlyFavorites(false);
+                      setCatalogCategory('all');
+                    }}
+                    className="mt-3 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Hiển thị lại tất cả sản phẩm
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 bg-white border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>
+                  💡 Mẹo: Bấm ngôi sao <strong className="text-amber-600">⭐</strong> trên bất kỳ sản phẩm nào để đưa lên hàng đầu vĩnh viễn.
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCatalogModal(false)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow-xs"
+                >
+                  Xong & Quay lại đơn hàng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Customer Modal */}
+      {showQuickCustomerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-amber-400" />
+                Thêm Khách Hàng / Studio Mới
+              </h3>
+              <button
+                onClick={() => setShowQuickCustomerModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Bảng giá áp dụng *
+                </label>
+                <select
+                  value={newCustType}
+                  onChange={(e) => setNewCustType(e.target.value as ProductCategory)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-amber-50/40 outline-hidden focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="GIÁ STUDIO">🏢 1. GIÁ STUDIO (Studio cưới & Đại lý sỉ)</option>
+                  <option value="Freelance">📸 2. Freelance (Thợ chụp tự do)</option>
+                  <option value="Khách Lẻ">👤 3. Khách Lẻ (Khách lẻ in gia đình)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Tên Khách Hàng / Studio *
+                </label>
+                <input
+                  type="text"
+                  value={newCustName}
+                  onChange={(e) => setNewCustName(e.target.value)}
+                  placeholder="Ví dụ: Studio Áo Cưới Lan Hương"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Số Điện Thoại
+                </label>
+                <input
+                  type="text"
+                  value={newCustPhone}
+                  onChange={(e) => setNewCustPhone(e.target.value)}
+                  placeholder="0988..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Địa Chỉ
+                </label>
+                <input
+                  type="text"
+                  value={newCustAddress}
+                  onChange={(e) => setNewCustAddress(e.target.value)}
+                  placeholder="Địa chỉ giao ảnh..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Số Nợ Cũ Ban Đầu (nếu có)
+                </label>
+                <MoneyInput
+                  value={newCustInitialDebt}
+                  onChange={(val) => setNewCustInitialDebt(val)}
+                  placeholder="0"
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-amber-500"
+                  showWords={true}
+                />
+              </div>
+            </div>
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowQuickCustomerModal(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickCustomer}
+                className="px-4 py-1.5 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl shadow-xs cursor-pointer"
+              >
+                Lưu Khách Hàng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
