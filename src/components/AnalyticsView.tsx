@@ -1,10 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Order, Product, StockImportReceipt, Customer } from '../types';
-import { formatCurrency, formatNumber } from '../utils/formatters';
+import { formatCurrency } from '../utils/formatters';
 import {
-  TrendingUp, Calendar, DollarSign, CreditCard, ShoppingBag,
-  Award, PieChart, BarChart3, ArrowUpRight, ArrowDownRight, Layers, Target,
-  ChevronRight, Boxes, Truck, Coins, ShieldCheck, AlertCircle
+  Calendar, DollarSign, Award, BarChart3, RotateCcw,
+  Sparkles, CheckCircle2, Flame, ArrowDown, TrendingUp, Coins
 } from 'lucide-react';
 
 interface AnalyticsViewProps {
@@ -12,20 +11,31 @@ interface AnalyticsViewProps {
   products: Product[];
   stockImports?: StockImportReceipt[];
   customers?: Customer[];
+  onResetYearData?: (year: number, resetType: 'all' | 'ordersOnly' | 'baselineOnly') => void;
 }
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   orders,
   products,
-  stockImports = [],
-  customers = []
+  customers = [],
+  onResetYearData
 }) => {
-  // Current year defaults to 2026 (or new Date().getFullYear())
+  // Current real year
   const currentRealYear = new Date().getFullYear();
+  const currentRealMonth = new Date().getMonth() + 1;
+  const currentRealDayStr = new Date().toISOString().slice(0, 10);
+
   const [selectedYear, setSelectedYear] = useState<number>(currentRealYear);
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all'); // 1-12 or 'all'
+  const [dailyMonth, setDailyMonth] = useState<number>(currentRealMonth);
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'monthly' | 'daily'>('all');
 
-  // Extract all existing years from orders & stock imports & customer initial records
+  // Reset modal state
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetOption, setResetOption] = useState<'all' | 'ordersOnly' | 'baselineOnly'>('all');
+  const [resetSuccessMsg, setResetSuccessMsg] = useState('');
+
+  // Extract all existing years from orders & customer initial records
   const availableYears = useMemo(() => {
     const yearsSet = new Set<number>();
     for (let y = currentRealYear; y <= currentRealYear + 5; y++) {
@@ -33,10 +43,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     }
     orders.forEach(o => {
       const y = new Date(o.date).getFullYear();
-      if (!isNaN(y)) yearsSet.add(y);
-    });
-    stockImports.forEach(imp => {
-      const y = new Date(imp.date).getFullYear();
       if (!isNaN(y)) yearsSet.add(y);
     });
     customers.forEach(c => {
@@ -48,7 +54,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       }
     });
     return Array.from(yearsSet).sort((a, b) => a - b);
-  }, [orders, stockImports, customers, currentRealYear]);
+  }, [orders, customers, currentRealYear]);
 
   // Filter orders by year and month
   const filteredOrders = useMemo(() => {
@@ -63,19 +69,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       return true;
     });
   }, [orders, selectedYear, selectedMonth]);
-
-  // Filter stock imports by year and month
-  const filteredImports = useMemo(() => {
-    return stockImports.filter(imp => {
-      const d = new Date(imp.date);
-      const y = d.getFullYear();
-      const m = d.getMonth() + 1;
-
-      if (y !== selectedYear) return false;
-      if (selectedMonth !== 'all' && m !== selectedMonth) return false;
-      return true;
-    });
-  }, [stockImports, selectedYear, selectedMonth]);
 
   // Tổng doanh thu đầu kỳ của tất cả khách hàng (từ Quản Lý Khách Hàng, Studio & Sổ Nợ Tiệm In 194)
   const totalCustomersInitialRevenue = useMemo(() => {
@@ -92,8 +85,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     return filteredOrders.reduce((sum, o) => sum + (o.subtotal - (o.discount || 0)), 0);
   }, [filteredOrders]);
 
-  // Top level KPI calculations:
-  // "1. Doanh Thu Bán Ảnh (Cả Năm 2026)" liên kết lấy cả số liệu "Tổng doanh thu năm" bên Quản Lý Khách Hàng
+  // Top level KPI: "1. Doanh Thu Bán Ảnh (Cả Năm 2026)" liên kết lấy cả số liệu "Tổng doanh thu năm" bên Quản Lý Khách Hàng
   const totalRevenue = useMemo(() => {
     if (selectedMonth === 'all') {
       return ordersRevenue + totalCustomersInitialRevenue;
@@ -101,31 +93,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     return ordersRevenue;
   }, [selectedMonth, ordersRevenue, totalCustomersInitialRevenue]);
 
-  const totalCollected = useMemo(() => {
-    return filteredOrders.reduce((sum, o) => sum + (o.paid || 0), 0);
-  }, [filteredOrders]);
-
-  const totalOutstandingDebt = useMemo(() => {
-    return filteredOrders.reduce((sum, o) => sum + (o.totalDue || 0), 0);
-  }, [filteredOrders]);
-
   const totalOrdersCount = filteredOrders.length;
   const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
-
-  // Total material purchase cost (Tổng giá vốn nhập vật tư trong kỳ)
-  const totalImportCost = useMemo(() => {
-    return filteredImports.reduce((sum, imp) => sum + (imp.totalAmount || 0), 0);
-  }, [filteredImports]);
-
-  // Lời / Lãi thực tế = Doanh thu bán hàng - Chi phí nhập vật tư
-  const grossProfit = useMemo(() => {
-    return totalRevenue - totalImportCost;
-  }, [totalRevenue, totalImportCost]);
-
-  const profitMarginPercent = useMemo(() => {
-    if (totalRevenue <= 0) return 0;
-    return Math.round((grossProfit / totalRevenue) * 100);
-  }, [totalRevenue, grossProfit]);
 
   // Monthly 1-12 data for the selected year
   const monthlyData = useMemo(() => {
@@ -133,12 +102,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       month: i + 1,
       name: `Th ${i + 1}`,
       revenue: 0,
-      collected: 0,
-      importCost: 0,
-      profit: 0,
-      profitMargin: 0,
-      ordersCount: 0,
-      importsCount: 0
+      ordersCount: 0
     }));
 
     // Aggregate sales orders
@@ -150,108 +114,116 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         if (mIdx >= 0 && mIdx < 12) {
           const rev = o.subtotal - (o.discount || 0);
           months[mIdx].revenue += rev;
-          months[mIdx].collected += (o.paid || 0);
           months[mIdx].ordersCount += 1;
         }
       }
     });
 
-    // Aggregate material purchases
-    stockImports.forEach(imp => {
-      const d = new Date(imp.date);
-      if (d.getFullYear() === selectedYear) {
-        const mIdx = d.getMonth();
-        if (mIdx >= 0 && mIdx < 12) {
-          months[mIdx].importCost += (imp.totalAmount || 0);
-          months[mIdx].importsCount += 1;
-        }
-      }
-    });
-
-    // Calculate profit per month
-    months.forEach(m => {
-      m.profit = m.revenue - m.importCost;
-      m.profitMargin = m.revenue > 0 ? Math.round((m.profit / m.revenue) * 100) : 0;
-    });
-
     return months;
-  }, [orders, stockImports, selectedYear]);
+  }, [orders, selectedYear]);
 
   const maxChartValue = useMemo(() => {
     let max = 1000000;
     monthlyData.forEach(m => {
       if (m.revenue > max) max = m.revenue;
-      if (m.importCost > max) max = m.importCost;
-      if (m.profit > max) max = m.profit;
     });
     return max;
   }, [monthlyData]);
 
-  // Product Category distribution
-  const categoryStats = useMemo(() => {
-    const map = new Map<string, { count: number; revenue: number }>();
+  // ==========================================
+  // THỐNG KÊ DOANH SỐ PHÁT SINH TỪNG NGÀY TRONG THÁNG
+  // ==========================================
+  const dailyBreakdown = useMemo(() => {
+    // Number of days in dailyMonth of selectedYear
+    const daysCount = new Date(selectedYear, dailyMonth, 0).getDate();
+    const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
 
-    filteredOrders.forEach(o => {
-      o.items.forEach(item => {
-        const prod = products.find(p => p.code === item.productCode);
-        const cat = prod?.category || (item.productCode.startsWith('FL-') ? 'Freelance' : item.productCode.startsWith('KL-') ? 'Khách Lẻ' : 'GIÁ STUDIO');
-        const cur = map.get(cat) || { count: 0, revenue: 0 };
-        cur.count += item.quantity;
-        cur.revenue += item.amount;
-        map.set(cat, cur);
+    const days = Array.from({ length: daysCount }, (_, i) => {
+      const dayNum = i + 1;
+      const dateStr = `${selectedYear}-${String(dailyMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+      const dayDate = new Date(selectedYear, dailyMonth - 1, dayNum);
+      const dayName = dayNames[dayDate.getDay()];
+
+      // Find orders on this day
+      const dayOrders = orders.filter(o => {
+        if (o.status === 'cancelled') return false;
+        return o.date === dateStr;
       });
+
+      const revenue = dayOrders.reduce((sum, o) => sum + (o.subtotal - (o.discount || 0)), 0);
+
+      return {
+        day: dayNum,
+        dateStr,
+        dayName,
+        isWeekend: dayDate.getDay() === 0 || dayDate.getDay() === 6,
+        isToday: dateStr === currentRealDayStr,
+        ordersCount: dayOrders.length,
+        orders: dayOrders,
+        revenue
+      };
     });
 
-    const arr = Array.from(map.entries()).map(([name, data]) => ({
-      name,
-      ...data,
-      percent: totalRevenue > 0 ? Math.round((data.revenue / totalRevenue) * 100) : 0
-    }));
+    const totalMonthRevenue = days.reduce((sum, d) => sum + d.revenue, 0);
+    const totalMonthOrders = days.reduce((sum, d) => sum + d.ordersCount, 0);
 
-    return arr.sort((a, b) => b.revenue - a.revenue);
-  }, [filteredOrders, products, totalRevenue]);
+    const activeDays = days.filter(d => d.revenue > 0);
+    const maxRevenue = activeDays.length > 0 ? Math.max(...activeDays.map(d => d.revenue)) : 0;
+    const minRevenue = activeDays.length > 0 ? Math.min(...activeDays.map(d => d.revenue)) : 0;
 
-  // Top photo sizes sold
-  const sizeStats = useMemo(() => {
-    const map = new Map<string, { quantity: number; revenue: number }>();
+    const maxDay = activeDays.find(d => d.revenue === maxRevenue) || null;
+    const minDay = activeDays.length > 1 ? activeDays.find(d => d.revenue === minRevenue) : (activeDays.length === 1 ? activeDays[0] : null);
 
-    filteredOrders.forEach(o => {
-      o.items.forEach(item => {
-        const sizeKey = item.size ? item.size.trim() : 'Khác';
-        const cur = map.get(sizeKey) || { quantity: 0, revenue: 0 };
-        cur.quantity += item.quantity;
-        cur.revenue += item.amount;
-        map.set(sizeKey, cur);
-      });
-    });
+    const avgDailyRevenue = activeDays.length > 0 ? Math.round(totalMonthRevenue / daysCount) : 0;
+    const avgPerActiveDay = activeDays.length > 0 ? Math.round(totalMonthRevenue / activeDays.length) : 0;
 
-    return Array.from(map.entries())
-      .map(([size, data]) => ({ size, ...data }))
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 6);
-  }, [filteredOrders]);
+    return {
+      days,
+      daysCount,
+      totalMonthRevenue,
+      totalMonthOrders,
+      activeDaysCount: activeDays.length,
+      maxDay,
+      minDay,
+      maxRevenue,
+      minRevenue,
+      avgDailyRevenue,
+      avgPerActiveDay
+    };
+  }, [orders, selectedYear, dailyMonth, currentRealDayStr]);
+
+  const handleConfirmReset = () => {
+    if (onResetYearData) {
+      onResetYearData(selectedYear, resetOption);
+      setResetSuccessMsg(`Đã đặt lại thành công dữ liệu năm ${selectedYear}!`);
+      setTimeout(() => {
+        setResetSuccessMsg('');
+        setIsResetModalOpen(false);
+      }, 1500);
+    }
+  };
 
   return (
     <div className="space-y-6">
       {/* Header & Year/Month Filter Toolbar */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-lg font-bold text-slate-900 uppercase">
-              BÁO CÁO DOANH THU, CHI PHÍ VỐN & LỜI LÃI
+              BÁO CÁO THỐNG KÊ DOANH SỐ BÁN ẢNH
             </h2>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-              {selectedYear}
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-slate-950 shadow-xs">
+              NĂM {selectedYear}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tổng hợp kết quả kinh doanh bán ảnh, chi phí nhập vật tư kho và lợi nhuận ròng thực tế
+            Theo dõi tổng hợp doanh số 12 tháng và chi tiết doanh số phát sinh từng ngày trong tháng
           </p>
         </div>
 
-        {/* Year & Month Selector */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Year selector */}
+        {/* Action controls & Year selector */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Year selector buttons */}
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
             <span className="text-xs font-bold text-slate-500 px-2 flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5 text-amber-600" />
@@ -262,10 +234,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                 <button
                   key={year}
                   type="button"
-                  onClick={() => setSelectedYear(year)}
+                  onClick={() => {
+                    setSelectedYear(year);
+                    if (selectedMonth !== 'all') {
+                      setDailyMonth(selectedMonth);
+                    }
+                  }}
                   className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                     selectedYear === year
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      ? 'bg-amber-500 text-slate-950 shadow-xs font-black'
                       : 'text-slate-700 hover:bg-slate-200'
                   }`}
                 >
@@ -275,217 +252,568 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             </div>
           </div>
 
-          {/* Month selector */}
+          {/* Month selector for KPI filter */}
           <select
             value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-            className="px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none"
+            onChange={(e) => {
+              const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
+              setSelectedMonth(val);
+              if (val !== 'all') {
+                setDailyMonth(val);
+              }
+            }}
+            className="px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
           >
-            <option value="all">📅 Cả năm {selectedYear}</option>
+            <option value="all">📅 Toàn bộ cả năm {selectedYear}</option>
             {Array.from({ length: 12 }, (_, i) => (
               <option key={i + 1} value={i + 1}>
                 Tháng {i + 1} / {selectedYear}
               </option>
             ))}
           </select>
-        </div>
-      </div>
 
-      {/* TOP PROFIT & LOSS KPI CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* KPI 1: Doanh Thu Bán Hàng */}
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 border border-slate-700 shadow-md">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              1. Doanh Thu Bán Ảnh ({selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : `Cả Năm ${selectedYear}`})
-            </span>
-            <span className="p-2 bg-blue-500/20 text-blue-400 rounded-xl">
-              <DollarSign className="w-5 h-5" />
-            </span>
-          </div>
-          <div className="font-mono text-3xl font-black text-amber-400">
-            {formatCurrency(totalRevenue)}
-          </div>
-          {totalCustomersInitialRevenue > 0 && selectedMonth === 'all' ? (
-            <div className="text-[11px] text-slate-300 mt-2.5 pt-2 border-t border-slate-700/60 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-amber-300 flex items-center gap-1 font-semibold">
-                  <Award className="w-3.5 h-3.5 text-amber-400" />
-                  Đầu kỳ (sổ khách hàng):
-                </span>
-                <span className="font-mono font-bold text-amber-300">
-                  {formatCurrency(totalCustomersInitialRevenue)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Hóa đơn mới trên app:</span>
-                <span className="font-mono font-semibold text-white">
-                  {formatCurrency(ordersRevenue)} ({totalOrdersCount} đơn)
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-              <span>Tổng cộng <strong>{totalOrdersCount}</strong> đơn hàng</span>
-              <span className="text-blue-300">TB: {formatCurrency(avgOrderValue)}/đơn</span>
-            </p>
+          {/* Manual Reset Year Data Button */}
+          {onResetYearData && (
+            <button
+              type="button"
+              onClick={() => setIsResetModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition cursor-pointer shadow-2xs hover:shadow-xs"
+              title={`Xóa hoặc đặt lại dữ liệu của năm ${selectedYear} để làm bảng mới`}
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+              <span>Reset Dữ Liệu Năm {selectedYear}</span>
+            </button>
           )}
         </div>
-
-        {/* KPI 2: Tổng Tiền Nhập Vật Tư (Vốn Kho) */}
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 border border-slate-700 shadow-md">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              2. Chi Phí Nhập Vật Tư Kho
-            </span>
-            <span className="p-2 bg-rose-500/20 text-rose-400 rounded-xl">
-              <Boxes className="w-5 h-5" />
-            </span>
-          </div>
-          <div className="font-mono text-3xl font-black text-rose-400">
-            {formatCurrency(totalImportCost)}
-          </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>Đã nhập <strong>{filteredImports.length}</strong> phiếu kho</span>
-            <span className="text-rose-300">Tiền mua phôi gỗ, giấy, mica...</span>
-          </p>
-        </div>
-
-        {/* KPI 3: LỢI NHUẬN THỰC TẾ (LỜI / LÃI) */}
-        <div className={`rounded-2xl p-5 border shadow-lg sm:col-span-2 lg:col-span-1 ${
-          grossProfit >= 0
-            ? 'bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-900 text-white border-emerald-500/50'
-            : 'bg-gradient-to-br from-rose-950 via-slate-900 to-slate-900 text-white border-rose-500/50'
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
-              <Coins className="w-4 h-4 text-emerald-400" />
-              <span>3. LỜI / LÃI THỰC TẾ (LỢI NHUẬN)</span>
-            </span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              grossProfit >= 0 ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'
-            }`}>
-              {profitMarginPercent > 0 ? `+${profitMarginPercent}% Lãi` : `${profitMarginPercent}%`}
-            </span>
-          </div>
-          <div className={`font-mono text-3xl font-black ${
-            grossProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
-          }`}>
-            {formatCurrency(grossProfit)}
-          </div>
-          <p className="text-xs text-slate-300 mt-2 flex items-center gap-1">
-            <span className="font-semibold">= Doanh thu ({formatCurrency(totalRevenue)}) - Vốn nhập ({formatCurrency(totalImportCost)})</span>
-          </p>
-        </div>
       </div>
 
-      {/* SECONDARY ROW: CASH COLLECTED & OUTSTANDING DEBT */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* Thực thu */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center justify-between">
+      {/* TOP REVENUE SUMMARY BANNER */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-800 text-white rounded-2xl p-5 border border-slate-700 shadow-md">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tiền đã thu về (Tiền mặt / CK)</span>
-            <div className="font-mono text-2xl font-black text-emerald-600 mt-0.5">
-              {formatCurrency(totalCollected)}
+            <div className="flex items-center gap-2 mb-1">
+              <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
+                <DollarSign className="w-5 h-5" />
+              </span>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                TỔNG DOANH THU BÁN ẢNH ({selectedMonth !== 'all' ? `THÁNG ${selectedMonth}` : `CẢ NĂM ${selectedYear}`})
+              </span>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Đạt {totalRevenue > 0 ? Math.round((totalCollected / totalRevenue) * 100) : 0}% tổng doanh số
-            </p>
+            <div className="font-mono text-3xl sm:text-4xl font-black text-amber-400">
+              {formatCurrency(totalRevenue)}
+            </div>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-            <CreditCard className="w-6 h-6" />
+
+          <div className="flex items-center gap-4 sm:border-l sm:border-slate-700 sm:pl-6">
+            <div>
+              <p className="text-xs text-slate-400">Tổng số đơn hàng</p>
+              <p className="font-mono text-xl font-bold text-white mt-0.5">{totalOrdersCount} đơn</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400">Giá trị trung bình / đơn</p>
+              <p className="font-mono text-xl font-bold text-blue-300 mt-0.5">{formatCurrency(avgOrderValue)}</p>
+            </div>
           </div>
         </div>
 
-        {/* Công nợ chưa thu */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Công nợ Studio còn thiếu</span>
-            <div className="font-mono text-2xl font-black text-amber-700 mt-0.5">
-              {formatCurrency(totalOutstandingDebt)}
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Khoản tiền cần đối soát thu hồi từ các đối tác
-            </p>
+        {totalCustomersInitialRevenue > 0 && selectedMonth === 'all' && (
+          <div className="text-xs text-slate-300 mt-3 pt-3 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-amber-300 flex items-center gap-1.5 font-semibold">
+              <Award className="w-4 h-4 text-amber-400" />
+              Doanh thu đầu kỳ (nhập tay trong sổ khách hàng): <strong className="font-mono text-amber-300 text-sm">{formatCurrency(totalCustomersInitialRevenue)}</strong>
+            </span>
+            <span className="text-slate-400">
+              Hóa đơn phát sinh trên app: <strong className="font-mono text-white text-sm">{formatCurrency(ordersRevenue)}</strong> ({totalOrdersCount} đơn)
+            </span>
           </div>
-          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl">
-            <TrendingUp className="w-6 h-6" />
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* 12 Months Visual Comparison: Revenue vs Material Cost vs Profit */}
+      {/* SUB-TAB NAVIGATOR FOR TABLES */}
+      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('all')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSubTab === 'all'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            📑 Hiển thị cả 2 bảng
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('monthly')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSubTab === 'monthly'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            📊 Bảng Doanh Số 12 Tháng
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('daily')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSubTab === 'daily'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            📅 Bảng Doanh Số Từng Ngày
+          </button>
+        </div>
+
+        {/* Hint */}
+        <span className="text-xs text-slate-400 hidden sm:inline-flex items-center gap-1">
+          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+          Bấm nút "Xem ngày" để mở chi tiết từng ngày của tháng đó
+        </span>
+      </div>
+
+      {/* ========================================================= */}
+      {/* 1. BẢNG THỐNG KÊ DOANH SỐ 12 THÁNG TRONG NĂM */}
+      {/* ========================================================= */}
+      {(activeSubTab === 'all' || activeSubTab === 'monthly') && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 bg-blue-500/20 text-blue-400 rounded-xl">
+                <BarChart3 className="w-5 h-5" />
+              </span>
+              <div>
+                <h3 className="font-extrabold text-sm uppercase tracking-wide text-white">
+                  1. BẢNG THỐNG KÊ DOANH SỐ 12 THÁNG NĂM {selectedYear}
+                </h3>
+                <p className="text-xs text-slate-300">
+                  Tổng hợp doanh thu bán ảnh theo từng tháng từ Tháng 1 đến Tháng 12
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {onResetYearData && (
+                <button
+                  type="button"
+                  onClick={() => setIsResetModalOpen(true)}
+                  className="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset bảng năm {selectedYear}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
+                  <th className="py-3 px-4 w-36">Tháng</th>
+                  <th className="py-3 px-4 w-32 text-center">Số Đơn Hàng</th>
+                  <th className="py-3 px-4 text-right text-sm">Doanh Thu Bán Ảnh (VNĐ)</th>
+                  <th className="py-3 px-4 w-36 text-center">Hành Động</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {totalCustomersInitialRevenue > 0 && (
+                  <tr className="bg-amber-50/70 text-slate-800 font-semibold border-b border-amber-200">
+                    <td className="py-3 px-4 font-bold text-amber-950 flex items-center gap-1.5">
+                      <Award className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Đầu kỳ (Sổ khách hàng)</span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-500 font-mono text-xs">
+                      Trước khi dùng app
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-amber-800 text-sm">
+                      {formatCurrency(totalCustomersInitialRevenue)}
+                    </td>
+                    <td className="py-3 px-4 text-center text-xs font-semibold text-amber-800">
+                      Sổ ghi nhận
+                    </td>
+                  </tr>
+                )}
+
+                {monthlyData.map(m => {
+                  const isCurrentSelected = dailyMonth === m.month;
+                  return (
+                    <tr
+                      key={m.month}
+                      className={`hover:bg-slate-50 transition ${
+                        isCurrentSelected ? 'bg-amber-50/40 font-semibold' : ''
+                      }`}
+                    >
+                      <td className="py-3.5 px-4 font-bold text-slate-900 text-sm">
+                        Tháng {m.month}/{selectedYear}
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-mono">
+                        {m.ordersCount > 0 ? (
+                          <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-xs">
+                            {m.ordersCount} đơn
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">0 đơn</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-slate-900 text-sm">
+                        {formatCurrency(m.revenue)}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDailyMonth(m.month);
+                            if (activeSubTab === 'monthly') {
+                              setActiveSubTab('daily');
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-2xs ${
+                            isCurrentSelected
+                              ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                          title={`Xem chi tiết doanh số từng ngày trong Tháng ${m.month}`}
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>Xem ngày</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-900 text-white font-extrabold text-sm">
+                  <td className="py-3.5 px-4">TỔNG NĂM {selectedYear}</td>
+                  <td className="py-3.5 px-4 text-center font-mono text-amber-400">
+                    {monthlyData.reduce((s, m) => s + m.ordersCount, 0)} đơn
+                  </td>
+                  <td className="py-3.5 px-4 text-right font-mono text-amber-400 text-base font-black">
+                    {formatCurrency(totalRevenue)}
+                  </td>
+                  <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-normal">
+                    12 Tháng
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 2. BẢNG DOANH SỐ PHÁT SINH TỪNG NGÀY TRONG THÁNG */}
+      {/* ========================================================= */}
+      {(activeSubTab === 'all' || activeSubTab === 'daily') && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-4 p-4 sm:p-5">
+          {/* Header of Daily View */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 bg-amber-500/20 text-amber-700 rounded-xl">
+                <Calendar className="w-5 h-5" />
+              </span>
+              <div>
+                <h3 className="font-extrabold text-sm uppercase tracking-wide text-slate-900 flex items-center gap-2">
+                  <span>2. BẢNG DOANH SỐ PHÁT SINH TỪNG NGÀY TRONG THÁNG {dailyMonth}/{selectedYear}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-blue-100 text-blue-800">
+                    {dailyBreakdown.daysCount} ngày
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Nắm bắt mỗi ngày phát sinh bao nhiêu doanh số, ngày nhiều nhất và ngày ít nhất trong tháng
+                </p>
+              </div>
+            </div>
+
+            {/* Month Quick Selector for Daily Table */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 max-w-full">
+              <span className="text-xs font-bold text-slate-500 shrink-0 mr-1">Chọn tháng:</span>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setDailyMonth(m)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer shrink-0 ${
+                    dailyMonth === m
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Th{m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* DAILY STATISTICAL HIGHLIGHTS / KPI CARDS */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* 1. Ngày nhiều doanh thu nhất (Đỉnh điểm) */}
+            <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-950 to-slate-900 text-white border border-emerald-500/40 shadow-xs">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="font-bold text-emerald-300 flex items-center gap-1">
+                  <Flame className="w-4 h-4 text-amber-400" />
+                  DOANH THU CAO NHẤT
+                </span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-emerald-500 text-slate-950">
+                  Kỷ Lục
+                </span>
+              </div>
+              {dailyBreakdown.maxDay ? (
+                <div>
+                  <div className="font-mono text-xl font-black text-amber-400 mt-1">
+                    {formatCurrency(dailyBreakdown.maxDay.revenue)}
+                  </div>
+                  <div className="text-xs text-slate-300 mt-1 flex items-center justify-between">
+                    <span>
+                      📅 <strong>{dailyBreakdown.maxDay.dayName}</strong> ({dailyBreakdown.maxDay.dateStr})
+                    </span>
+                    <span className="text-amber-300 font-bold">{dailyBreakdown.maxDay.ordersCount} đơn</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 mt-2">Chưa có phát sinh doanh thu trong tháng này</p>
+              )}
+            </div>
+
+            {/* 2. Ngày ít doanh thu nhất */}
+            <div className="p-4 rounded-xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 shadow-xs">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="font-bold text-rose-300 flex items-center gap-1">
+                  <ArrowDown className="w-4 h-4 text-rose-400" />
+                  DOANH THU THẤP NHẤT
+                </span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-slate-700 text-slate-300">
+                  Đáy Tháng
+                </span>
+              </div>
+              {dailyBreakdown.minDay ? (
+                <div>
+                  <div className="font-mono text-xl font-black text-rose-300 mt-1">
+                    {formatCurrency(dailyBreakdown.minDay.revenue)}
+                  </div>
+                  <div className="text-xs text-slate-300 mt-1 flex items-center justify-between">
+                    <span>
+                      📅 <strong>{dailyBreakdown.minDay.dayName}</strong> ({dailyBreakdown.minDay.dateStr})
+                    </span>
+                    <span className="text-rose-300 font-bold">{dailyBreakdown.minDay.ordersCount} đơn</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 mt-2">Chưa có phát sinh đơn</p>
+              )}
+            </div>
+
+            {/* 3. Doanh thu trung bình mỗi ngày */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="flex items-center justify-between text-xs mb-1 text-slate-600">
+                <span className="font-bold flex items-center gap-1">
+                  <TrendingUp className="w-4 h-4 text-blue-600" />
+                  DOANH THU TRUNG BÌNH
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">/{dailyBreakdown.daysCount} ngày</span>
+              </div>
+              <div className="font-mono text-xl font-black text-slate-900 mt-1">
+                {formatCurrency(dailyBreakdown.avgDailyRevenue)}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                TB ngày có đơn: <strong className="text-blue-700">{formatCurrency(dailyBreakdown.avgPerActiveDay)}</strong>
+              </p>
+            </div>
+
+            {/* 4. Tổng kết tháng đang xem */}
+            <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200">
+              <div className="flex items-center justify-between text-xs mb-1 text-amber-900">
+                <span className="font-bold flex items-center gap-1">
+                  <Coins className="w-4 h-4 text-amber-700" />
+                  TỔNG THÁNG {dailyMonth}/{selectedYear}
+                </span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-amber-200 text-amber-900">
+                  {dailyBreakdown.activeDaysCount}/{dailyBreakdown.daysCount} ngày bán
+                </span>
+              </div>
+              <div className="font-mono text-xl font-black text-amber-900 mt-1">
+                {formatCurrency(dailyBreakdown.totalMonthRevenue)}
+              </div>
+              <p className="text-[11px] text-amber-800 mt-1">
+                Tổng <strong>{dailyBreakdown.totalMonthOrders}</strong> đơn hàng phát sinh
+              </p>
+            </div>
+          </div>
+
+          {/* THE DAILY BREAKDOWN TABLE */}
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
+                  <th className="py-3 px-4 w-44">Ngày</th>
+                  <th className="py-3 px-4 w-36">Vị Trí / Đánh Giá</th>
+                  <th className="py-3 px-4 w-28 text-center">Số Đơn</th>
+                  <th className="py-3 px-4 text-right text-sm">Doanh Số Ngày (VNĐ)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dailyBreakdown.days.map(d => {
+                  const isMax = dailyBreakdown.maxDay && d.dateStr === dailyBreakdown.maxDay.dateStr && d.revenue > 0;
+                  const isMin = dailyBreakdown.minDay && d.dateStr === dailyBreakdown.minDay.dateStr && d.revenue > 0;
+                  const percent = dailyBreakdown.totalMonthRevenue > 0
+                    ? Math.round((d.revenue / dailyBreakdown.totalMonthRevenue) * 100)
+                    : 0;
+
+                  return (
+                    <tr
+                      key={d.dateStr}
+                      className={`hover:bg-slate-50 transition ${
+                        isMax
+                          ? 'bg-emerald-50/60 font-semibold'
+                          : isMin
+                          ? 'bg-rose-50/40'
+                          : d.isToday
+                          ? 'bg-blue-50/40'
+                          : d.isWeekend
+                          ? 'bg-slate-50/50'
+                          : ''
+                      }`}
+                    >
+                      {/* Ngày & Thứ */}
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-bold ${d.isWeekend ? 'text-rose-700' : 'text-slate-900'}`}>
+                            {d.dateStr}
+                          </span>
+                          <span className="text-xs text-slate-500 font-normal">
+                            ({d.dayName})
+                          </span>
+                          {d.isToday && (
+                            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-blue-600 text-white">
+                              Hôm nay
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Đánh giá / Điểm nhấn */}
+                      <td className="py-3 px-4">
+                        {isMax ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-black bg-emerald-600 text-white shadow-2xs">
+                            <Flame className="w-3.5 h-3.5 text-amber-300" />
+                            👑 CAO NHẤT THÁNG
+                          </span>
+                        ) : isMin ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-rose-100 text-rose-800">
+                            <ArrowDown className="w-3.5 h-3.5 text-rose-600" />
+                            🔻 THẤP NHẤT
+                          </span>
+                        ) : d.revenue > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            Có doanh số
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">---</span>
+                        )}
+                      </td>
+
+                      {/* Số đơn */}
+                      <td className="py-3 px-4 text-center font-mono">
+                        {d.ordersCount > 0 ? (
+                          <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-xs">
+                            {d.ordersCount} đơn
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">0</span>
+                        )}
+                      </td>
+
+                      {/* Doanh số ngày */}
+                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 text-sm">
+                        {d.revenue > 0 ? (
+                          <div className="flex items-center justify-end gap-3">
+                            <span className={isMax ? 'text-emerald-700 font-black text-base' : ''}>
+                              {formatCurrency(d.revenue)}
+                            </span>
+                            <span className="font-mono text-xs font-semibold text-slate-400 w-10 text-right">
+                              ({percent}%)
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 font-normal">0 đ</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-900 text-white font-extrabold text-sm">
+                  <td className="py-3.5 px-4">TỔNG THÁNG {dailyMonth}/{selectedYear}</td>
+                  <td className="py-3.5 px-4 text-slate-300 font-normal text-xs">
+                    {dailyBreakdown.activeDaysCount}/{dailyBreakdown.daysCount} ngày có doanh số
+                  </td>
+                  <td className="py-3.5 px-4 text-center font-mono text-amber-400">
+                    {dailyBreakdown.totalMonthOrders} đơn
+                  </td>
+                  <td className="py-3.5 px-4 text-right font-mono text-amber-400 text-base font-black">
+                    {formatCurrency(dailyBreakdown.totalMonthRevenue)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 12 Months Visual Chart & Breakdown */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
           <div>
             <h3 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-amber-600" />
-              BIỂU ĐỒ DOANH THU - CHI PHÍ VỐN - LỜI LÃI 12 THÁNG NĂM {selectedYear}
+              BIỂU ĐỒ DOANH SỐ 12 THÁNG NĂM {selectedYear}
             </h3>
             <p className="text-xs text-slate-500">
-              Nhấp vào từng cột tháng để xem chi tiết tháng đó
+              Nhấp vào từng cột tháng để chuyển nhanh xem chi tiết từng ngày của tháng đó
             </p>
-          </div>
-          <div className="flex items-center gap-4 text-xs font-bold flex-wrap">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-blue-500 rounded-xs"></span> Doanh thu
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-rose-500 rounded-xs"></span> Tiền nhập vật tư
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-emerald-500 rounded-xs"></span> Lợi nhuận (Lời)
-            </span>
           </div>
         </div>
 
         {/* Bar chart container */}
-        <div className="h-64 flex items-end justify-between gap-1 sm:gap-2.5 pt-6 pb-2 px-1 border-b border-slate-200">
+        <div className="h-56 flex items-end justify-between gap-1 sm:gap-3 pt-6 pb-2 px-1 border-b border-slate-200">
           {monthlyData.map(m => {
             const revHeight = maxChartValue > 0 ? (m.revenue / maxChartValue) * 100 : 0;
-            const costHeight = maxChartValue > 0 ? (m.importCost / maxChartValue) * 100 : 0;
-            const profitHeight = maxChartValue > 0 ? Math.max(0, m.profit / maxChartValue) * 100 : 0;
-            const isCurrentSelected = selectedMonth === m.month;
+            const isCurrentSelected = dailyMonth === m.month;
 
             return (
               <div
                 key={m.month}
-                onClick={() => setSelectedMonth(selectedMonth === m.month ? 'all' : m.month)}
-                className={`flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative p-1 rounded-xl transition ${
-                  isCurrentSelected ? 'bg-amber-50/80 border border-amber-300 ring-2 ring-amber-400/20' : 'hover:bg-slate-50'
+                onClick={() => setDailyMonth(m.month)}
+                className={`flex-1 flex flex-col items-center h-full justify-end group cursor-pointer p-1 rounded-t-lg transition ${
+                  isCurrentSelected ? 'bg-amber-100/60 font-bold' : 'hover:bg-slate-50'
                 }`}
+                title={`Tháng ${m.month}/${selectedYear}: Doanh thu ${formatCurrency(m.revenue)}`}
               >
-                {/* Tooltip on hover */}
-                <div className="opacity-0 group-hover:opacity-100 pointer-events-none absolute -top-20 bg-slate-900 text-white text-[10px] rounded-lg py-1.5 px-2.5 whitespace-nowrap z-20 shadow-xl transition duration-150">
-                  <p className="font-extrabold text-amber-400">Tháng {m.month}/{selectedYear}</p>
-                  <p className="text-blue-200">Doanh thu: {formatCurrency(m.revenue)}</p>
-                  <p className="text-rose-200">Chi phí nhập: {formatCurrency(m.importCost)}</p>
-                  <p className="text-emerald-300 font-bold">Lợi nhuận: {formatCurrency(m.profit)} ({m.profitMargin}%)</p>
+                {/* Value tooltip on hover */}
+                <div className="text-[10px] font-mono text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition whitespace-nowrap hidden sm:block">
+                  {m.revenue > 0 ? `${Math.round(m.revenue / 1000000)}Tr` : '0'}
                 </div>
 
-                {/* 3 Bars: Revenue, Cost, Profit */}
-                <div className="w-full flex items-end justify-center gap-0.5 sm:gap-1 h-full">
+                <div className="w-full flex items-end justify-center h-40">
                   {/* Revenue Bar */}
                   <div
-                    style={{ height: `${Math.max(revHeight, 3)}%` }}
-                    className="w-1.5 sm:w-2.5 bg-blue-500 rounded-t-xs transition-all duration-300 group-hover:bg-blue-600"
-                    title={`Doanh thu: ${formatCurrency(m.revenue)}`}
-                  />
-                  {/* Cost Bar */}
-                  <div
-                    style={{ height: `${Math.max(costHeight, m.importCost > 0 ? 3 : 0)}%` }}
-                    className="w-1.5 sm:w-2.5 bg-rose-500 rounded-t-xs transition-all duration-300 group-hover:bg-rose-600"
-                    title={`Chi phí nhập: ${formatCurrency(m.importCost)}`}
-                  />
-                  {/* Profit Bar */}
-                  <div
-                    style={{ height: `${Math.max(profitHeight, m.profit > 0 ? 3 : 0)}%` }}
-                    className="w-1.5 sm:w-2.5 bg-emerald-500 rounded-t-xs transition-all duration-300 group-hover:bg-emerald-600"
-                    title={`Lợi nhuận: ${formatCurrency(m.profit)}`}
+                    style={{ height: `${Math.max(revHeight, m.revenue > 0 ? 4 : 0)}%` }}
+                    className={`w-full max-w-[28px] rounded-t-md transition-all duration-300 ${
+                      isCurrentSelected
+                        ? 'bg-amber-500 group-hover:bg-amber-600'
+                        : 'bg-blue-500 group-hover:bg-blue-600'
+                    }`}
                   />
                 </div>
 
-                <span className="text-[10px] sm:text-xs font-bold text-slate-600 mt-2">
+                <span className={`text-[10px] sm:text-xs font-bold mt-2 ${
+                  isCurrentSelected ? 'text-amber-900 font-black scale-110' : 'text-slate-600'
+                }`}>
                   T{m.month}
                 </span>
               </div>
@@ -494,216 +822,122 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         </div>
       </div>
 
-      {/* MONTHLY DETAILED PROFIT & LOSS TABLE */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div>
-            <h3 className="font-extrabold text-sm text-slate-800">BẢNG TỔNG HỢP LỜI - LÃI 12 THÁNG NĂM {selectedYear}</h3>
-            <p className="text-xs text-slate-500">So sánh chi tiết doanh thu, chi phí vật tư và lợi nhuận từng tháng</p>
-          </div>
-          {selectedMonth !== 'all' && (
-            <button
-              type="button"
-              onClick={() => setSelectedMonth('all')}
-              className="text-xs text-amber-700 hover:underline font-bold"
-            >
-              Xem toàn bộ cả năm
-            </button>
-          )}
-        </div>
+      {/* ========================================================= */}
+      {/* MODAL: RESET DỮ LIỆU NĂM THỦ CÔNG */}
+      {/* ========================================================= */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-rose-500/20 text-rose-400 rounded-lg">
+                  <RotateCcw className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="font-bold text-sm">Đặt Lại / Reset Dữ Liệu Năm {selectedYear}</h3>
+                  <p className="text-[11px] text-slate-400">Xóa dữ liệu để chuẩn bị đón năm mới hoặc bắt đầu năm tài chính mới</p>
+                </div>
+              </div>
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
-                <th className="py-3 px-3 w-24">Tháng</th>
-                <th className="py-3 px-3 w-24 text-center">Số Đơn</th>
-                <th className="py-3 px-3 text-right">Doanh Thu Bán Ảnh</th>
-                <th className="py-3 px-3 text-right">Chi Phí Nhập Vật Tư</th>
-                <th className="py-3 px-3 text-right">Lợi Nhuận (Lời/Lãi)</th>
-                <th className="py-3 px-3 w-28 text-center">Tỷ Suất Lãi %</th>
-                <th className="py-3 px-3 w-28 text-center">Đánh Giá</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {totalCustomersInitialRevenue > 0 && (
-                <tr className="bg-amber-50/70 text-slate-800 font-semibold border-b border-amber-200">
-                  <td className="py-2.5 px-3 font-bold text-amber-950 flex items-center gap-1.5">
-                    <Award className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <span>Đầu kỳ (Sổ khách hàng)</span>
-                  </td>
-                  <td className="py-2.5 px-3 text-center text-slate-500 font-mono text-[11px]">
-                    Trước app
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-800">
-                    {formatCurrency(totalCustomersInitialRevenue)}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-400">---</td>
-                  <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-800">
-                    {formatCurrency(totalCustomersInitialRevenue)}
-                  </td>
-                  <td className="py-2.5 px-3 text-center text-slate-400">---</td>
-                  <td className="py-2.5 px-3 text-center text-[11px] font-semibold text-amber-800">
-                    Sổ khách hàng
-                  </td>
-                </tr>
-              )}
-              {monthlyData.map(m => {
-                const isSelected = selectedMonth === m.month;
-                return (
-                  <tr
-                    key={m.month}
-                    onClick={() => setSelectedMonth(selectedMonth === m.month ? 'all' : m.month)}
-                    className={`hover:bg-slate-50 cursor-pointer transition ${
-                      isSelected ? 'bg-amber-50/60 font-semibold' : ''
-                    }`}
-                  >
-                    <td className="py-3 px-3 font-bold text-slate-900">
-                      Tháng {m.month}/{selectedYear}
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono">
-                      {m.ordersCount > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">
-                          {m.ordersCount} đơn
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">0</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                      {formatCurrency(m.revenue)}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-rose-600">
-                      {m.importCost > 0 ? `-${formatCurrency(m.importCost)}` : '0 đ'}
-                    </td>
-                    <td className={`py-3 px-3 text-right font-mono font-black text-sm ${
-                      m.profit >= 0 ? 'text-emerald-700' : 'text-rose-600'
+            {/* Modal Content */}
+            <div className="p-5 space-y-4">
+              {resetSuccessMsg ? (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-center text-emerald-800 font-bold flex flex-col items-center gap-2">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+                  <span>{resetSuccessMsg}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+                    <strong>Lưu ý:</strong> Hành động này sẽ xóa dữ liệu doanh số và đơn hàng của riêng <strong>Năm {selectedYear}</strong>. Các năm khác và danh mục bảng giá, danh sách khách hàng sẽ <strong>vẫn được giữ nguyên an toàn</strong>.
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700">Chọn hình thức đặt lại cho Năm {selectedYear}:</label>
+
+                    <label className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition ${
+                      resetOption === 'all'
+                        ? 'bg-rose-50 border-rose-400 text-slate-900'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                     }`}>
-                      {formatCurrency(m.profit)}
-                    </td>
-                    <td className="py-3 px-3 text-center font-bold">
-                      {m.revenue > 0 ? (
-                        <span className={`px-2 py-0.5 rounded-md ${
-                          m.profitMargin >= 40
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : m.profitMargin > 0
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {m.profitMargin}%
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">---</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 text-center">
-                      {m.revenue === 0 && m.importCost === 0 ? (
-                        <span className="text-slate-400 text-[11px]">Chưa phát sinh</span>
-                      ) : m.profit > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
-                          <ShieldCheck className="w-3.5 h-3.5" /> Có lãi
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600">
-                          <AlertCircle className="w-3.5 h-3.5" /> Âm vốn
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="bg-slate-900 text-white font-extrabold text-sm">
-                <td className="py-3.5 px-3">TỔNG NĂM {selectedYear}</td>
-                <td className="py-3.5 px-3 text-center font-mono text-amber-400">
-                  {monthlyData.reduce((s, m) => s + m.ordersCount, 0)} đơn
-                </td>
-                <td className="py-3.5 px-3 text-right font-mono text-amber-400">
-                  {formatCurrency(totalRevenue)}
-                </td>
-                <td className="py-3.5 px-3 text-right font-mono text-rose-400">
-                  -{formatCurrency(totalImportCost)}
-                </td>
-                <td className="py-3.5 px-3 text-right font-mono text-emerald-400 text-base">
-                  {formatCurrency(grossProfit)}
-                </td>
-                <td className="py-3.5 px-3 text-center text-amber-400">
-                  {profitMarginPercent}%
-                </td>
-                <td className="py-3.5 px-3 text-center text-emerald-400 font-bold">
-                  {grossProfit >= 0 ? 'LÃI RÒNG' : 'THUA LỖ'}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
+                      <input
+                        type="radio"
+                        name="resetOpt"
+                        checked={resetOption === 'all'}
+                        onChange={() => setResetOption('all')}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="text-xs font-bold">Xóa sạch toàn bộ đơn hàng & doanh thu đầu kỳ Năm {selectedYear}</p>
+                        <p className="text-[11px] text-slate-500">Đưa toàn bộ doanh số Năm {selectedYear} về 0đ để bắt đầu năm mới hoàn toàn.</p>
+                      </div>
+                    </label>
 
-      {/* Category & Size Breakdown Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Categories */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-          <h3 className="font-bold text-sm text-slate-900 mb-1 flex items-center gap-2">
-            <PieChart className="w-4 h-4 text-amber-600" />
-            Cơ Cấu Doanh Thu Theo Nhóm Sản Phẩm
-          </h3>
-          <p className="text-xs text-slate-500 mb-4">Ép gỗ, tráng gương, pha lê, album, khung...</p>
+                    <label className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition ${
+                      resetOption === 'ordersOnly'
+                        ? 'bg-rose-50 border-rose-400 text-slate-900'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="resetOpt"
+                        checked={resetOption === 'ordersOnly'}
+                        onChange={() => setResetOption('ordersOnly')}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="text-xs font-bold">Chỉ xóa các đơn hàng phát sinh trong Năm {selectedYear}</p>
+                        <p className="text-[11px] text-slate-500">Giữ nguyên số liệu doanh thu ban đầu đã nhập tay trong sổ khách hàng.</p>
+                      </div>
+                    </label>
 
-          <div className="space-y-3">
-            {categoryStats.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Chưa có dữ liệu đơn hàng trong kỳ này</p>
-            ) : (
-              categoryStats.map(cat => (
-                <div key={cat.name} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="text-slate-800">{cat.name} ({cat.count} SP)</span>
-                    <span className="font-mono text-slate-900">{formatCurrency(cat.revenue)} ({cat.percent}%)</span>
+                    <label className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition ${
+                      resetOption === 'baselineOnly'
+                        ? 'bg-rose-50 border-rose-400 text-slate-900'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="resetOpt"
+                        checked={resetOption === 'baselineOnly'}
+                        onChange={() => setResetOption('baselineOnly')}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="text-xs font-bold">Chỉ xóa số liệu doanh thu ban đầu nhập tay (Sổ khách hàng)</p>
+                        <p className="text-[11px] text-slate-500">Giữ nguyên các hóa đơn đã tạo trên app.</p>
+                      </div>
+                    </label>
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      style={{ width: `${cat.percent}%` }}
-                      className="h-full bg-amber-500 rounded-full"
-                    />
-                  </div>
-                </div>
-              ))
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            {!resetSuccessMsg && (
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsResetModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer transition"
+                >
+                  Hủy Bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReset}
+                  className="px-4 py-2 text-xs font-black bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-md cursor-pointer transition flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Xác Nhận Đặt Lại Năm {selectedYear}</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
-
-        {/* Top Sizes */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-          <h3 className="font-bold text-sm text-slate-900 mb-1 flex items-center gap-2">
-            <Layers className="w-4 h-4 text-amber-600" />
-            Các Khổ Ảnh Bán Chạy Nhất
-          </h3>
-          <p className="text-xs text-slate-500 mb-4">Các kích thước thông dụng nhất tiệm sản xuất</p>
-
-          <div className="space-y-3">
-            {sizeStats.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Chưa có dữ liệu đơn hàng trong kỳ này</p>
-            ) : (
-              sizeStats.map((item, idx) => (
-                <div key={item.size} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-800 font-black text-xs flex items-center justify-center">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <p className="text-xs font-bold text-slate-900">Khổ {item.size}</p>
-                      <p className="text-[11px] text-slate-500">{item.quantity} sản phẩm</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-mono text-xs font-bold text-slate-900">{formatCurrency(item.revenue)}</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

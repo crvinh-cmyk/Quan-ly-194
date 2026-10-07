@@ -378,6 +378,41 @@ export function loadDemoData(): void {
   resetAllData();
 }
 
+export function generateInitialDataTsCode(): string {
+  const workshop = getStoredWorkshopInfo();
+  const products = getStoredProducts();
+  const customers = getStoredCustomers();
+  const orders = getStoredOrders();
+  const materials = getStoredMaterials();
+  const stockImports = getStoredStockImports();
+
+  return `import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt } from '../types';
+
+export const DEFAULT_WORKSHOP_INFO: WorkshopInfo = ${JSON.stringify(workshop, null, 2)};
+
+export const DEFAULT_PRODUCTS: Product[] = ${JSON.stringify(products, null, 2)};
+
+export const DEFAULT_CUSTOMERS: Customer[] = ${JSON.stringify(customers, null, 2)};
+
+export const DEFAULT_ORDERS: Order[] = ${JSON.stringify(orders, null, 2)};
+
+export const DEFAULT_MATERIALS: Material[] = ${JSON.stringify(materials, null, 2)};
+
+export const DEFAULT_STOCK_IMPORTS: StockImportReceipt[] = ${JSON.stringify(stockImports, null, 2)};
+`;
+}
+
+export function downloadInitialDataTs(): void {
+  const tsContent = generateInitialDataTsCode();
+  const blob = new Blob([tsContent], { type: 'text/typescript;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'initialData.ts';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function exportBackupJSON(): string {
   const data = {
     version: '1.1',
@@ -390,6 +425,17 @@ export function exportBackupJSON(): string {
     stockImports: getStoredStockImports()
   };
   return JSON.stringify(data, null, 2);
+}
+
+export function downloadBackupJSON(): void {
+  const jsonStr = exportBackupJSON();
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tiemin194_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function importBackupJSON(jsonStr: string): boolean {

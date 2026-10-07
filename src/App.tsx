@@ -22,8 +22,31 @@ import { SettingsModal } from './components/SettingsModal';
 import { DataManagementModal } from './components/DataManagementModal';
 import { DEFAULT_PRODUCTS } from './data/initialData';
 
+const STORAGE_TAB_KEY = 'xuongin194_active_tab';
+
+const getInitialTab = (): ActiveTab => {
+  try {
+    const validTabs: ActiveTab[] = ['pos', 'orders', 'inventory', 'analytics', 'products', 'customers'];
+    
+    // 1. Check sessionStorage first (current active session)
+    const fromSession = sessionStorage.getItem(STORAGE_TAB_KEY);
+    if (fromSession && validTabs.includes(fromSession as ActiveTab)) {
+      return fromSession as ActiveTab;
+    }
+
+    // 2. Check localStorage (persistent across browser restarts)
+    const fromLocal = localStorage.getItem(STORAGE_TAB_KEY);
+    if (fromLocal && validTabs.includes(fromLocal as ActiveTab)) {
+      return fromLocal as ActiveTab;
+    }
+  } catch (e) {
+    console.error('Error reading active tab from storage', e);
+  }
+  return 'pos';
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(getInitialTab);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -41,9 +64,30 @@ export default function App() {
   // Trigger to reset POS form to a brand new clean order
   const [newOrderTrigger, setNewOrderTrigger] = useState<number>(0);
 
+  // Function to switch tab and immediately persist to storage
+  const handleSelectTab = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    try {
+      localStorage.setItem(STORAGE_TAB_KEY, tab);
+      sessionStorage.setItem(STORAGE_TAB_KEY, tab);
+    } catch (e) {
+      console.error('Error saving active tab to storage', e);
+    }
+  };
+
+  // Sync activeTab to storage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_TAB_KEY, activeTab);
+      sessionStorage.setItem(STORAGE_TAB_KEY, activeTab);
+    } catch (e) {
+      console.error('Error saving active tab to storage', e);
+    }
+  }, [activeTab]);
+
   // Handler to create new order immediately
   const handleTriggerNewOrder = () => {
-    setActiveTab('pos');
+    handleSelectTab('pos');
     setNewOrderTrigger(Date.now());
   };
 
@@ -329,6 +373,32 @@ export default function App() {
     saveStoredOrders(updated);
   };
 
+  // Reset all sales orders and customer baseline data for a specific year (đặt lại dữ liệu năm mới)
+  const handleResetYearData = (year: number, resetType: 'all' | 'ordersOnly' | 'baselineOnly' = 'all') => {
+    if (resetType === 'all' || resetType === 'ordersOnly') {
+      const updatedOrders = orders.filter(o => {
+        const oYear = new Date(o.date).getFullYear();
+        return oYear !== year;
+      });
+      setOrders(updatedOrders);
+      saveStoredOrders(updatedOrders);
+    }
+
+    if (resetType === 'all' || resetType === 'baselineOnly') {
+      const updatedCustomers = customers.map(c => {
+        const newYearly = { ...(c.initialYearlyRevenues || {}) };
+        delete newYearly[year];
+        return {
+          ...c,
+          initialYearlyRevenues: newYearly,
+          initialYearlyRevenue: year === new Date().getFullYear() ? 0 : c.initialYearlyRevenue
+        };
+      });
+      setCustomers(updatedCustomers);
+      saveStoredCustomers(updatedCustomers);
+    }
+  };
+
   // Update order status
   const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
     const updated = orders.map(o => (o.id === orderId ? { ...o, status, updatedAt: new Date().toISOString() } : o));
@@ -367,7 +437,7 @@ export default function App() {
       {/* Navigation & Header */}
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleSelectTab}
         workshop={workshop}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenDataManagement={() => setIsDataManagementOpen(true)}
@@ -380,7 +450,7 @@ export default function App() {
         {/* Quick mobile tab sub-navigation for small screens */}
         <div className="flex sm:hidden overflow-x-auto gap-1 mb-4 pb-1">
           <button
-            onClick={() => setActiveTab('pos')}
+            onClick={() => handleSelectTab('pos')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
               activeTab === 'pos' ? 'bg-amber-500 text-slate-950 font-extrabold' : 'bg-white text-slate-700'
             }`}
@@ -388,7 +458,7 @@ export default function App() {
             Bán Hàng
           </button>
           <button
-            onClick={() => setActiveTab('orders')}
+            onClick={() => handleSelectTab('orders')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
               activeTab === 'orders' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
             }`}
@@ -396,7 +466,7 @@ export default function App() {
             Đơn ({orders.length})
           </button>
           <button
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => handleSelectTab('inventory')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 ${
               activeTab === 'inventory' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
             }`}
@@ -409,7 +479,7 @@ export default function App() {
             )}
           </button>
           <button
-            onClick={() => setActiveTab('analytics')}
+            onClick={() => handleSelectTab('analytics')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
               activeTab === 'analytics' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
             }`}
@@ -417,7 +487,7 @@ export default function App() {
             Thống Kê
           </button>
           <button
-            onClick={() => setActiveTab('products')}
+            onClick={() => handleSelectTab('products')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
               activeTab === 'products' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
             }`}
@@ -425,7 +495,7 @@ export default function App() {
             Bảng Giá SP
           </button>
           <button
-            onClick={() => setActiveTab('customers')}
+            onClick={() => handleSelectTab('customers')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
               activeTab === 'customers' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
             }`}
@@ -461,7 +531,7 @@ export default function App() {
             onViewOrder={(order) => setActivePrintOrder(order)}
             onPrintOrder={(order) => setActivePrintOrder(order)}
             onEditOrder={(order) => {
-              setActiveTab('pos');
+              handleSelectTab('pos');
             }}
             onDeleteOrder={handleDeleteOrder}
             onUpdateStatus={handleUpdateOrderStatus}
@@ -495,6 +565,7 @@ export default function App() {
             products={products}
             stockImports={stockImports}
             customers={customers}
+            onResetYearData={handleResetYearData}
           />
         )}
 
@@ -518,7 +589,7 @@ export default function App() {
             onUpdateCustomer={handleUpdateCustomer}
             onRecordDebtPayment={handleRecordDebtPayment}
             onViewCustomerOrders={(cId) => {
-              setActiveTab('orders');
+              handleSelectTab('orders');
             }}
           />
         )}
