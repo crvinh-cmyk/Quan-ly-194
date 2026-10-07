@@ -6,7 +6,7 @@ import {
   Boxes, Plus, Search, AlertTriangle, CheckCircle2, TrendingDown,
   ArrowDownLeft, FileText, Calendar, DollarSign, PackagePlus,
   Edit, Trash2, SlidersHorizontal, RefreshCw, X, ArrowUpDown, Truck, ChevronRight,
-  BookOpen, Sparkles, ShoppingBag, ArrowRight
+  BookOpen, Sparkles, ShoppingBag, ArrowRight, Building2, Filter, Layers, PieChart
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 
@@ -41,47 +41,57 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
   onResetStockToZero,
   onReloadDefaultMaterials
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'inventory' | 'history' | 'sales_deductions'>('inventory');
+  // Active Sub-tab: 'inventory' | 'supplier_expenses' | 'history' | 'sales_deductions'
+  const [activeSubTab, setActiveSubTab] = useState<'inventory' | 'supplier_expenses' | 'history' | 'sales_deductions'>('inventory');
+  
+  // Filters for Material Inventory
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'low' | 'instock' | 'out'>('all');
 
-  // Modals
+  // Filters for Supplier Expenses & Inward Values
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(currentYear);
+  const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('all');
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
+
+  // Modals for Material
   const [isAddMaterialModalOpen, setIsAddMaterialModalOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
-  const [isNewImportModalOpen, setIsNewImportModalOpen] = useState(false);
-  const [quickImportMaterial, setQuickImportMaterial] = useState<Material | null>(null);
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
   const [adjustingMaterial, setAdjustingMaterial] = useState<Material | null>(null);
   const [adjustQty, setAdjustQty] = useState<number>(0);
   const [adjustReason, setAdjustReason] = useState<string>('Xuất dùng sản xuất in ảnh');
-  const [selectedReceiptDetail, setSelectedReceiptDetail] = useState<StockImportReceipt | null>(null);
   const [materialToDelete, setMaterialToDelete] = useState<Material | null>(null);
+
+  // Modals for Manual Inward / Stock Import
+  const [isNewImportModalOpen, setIsNewImportModalOpen] = useState(false);
+  const [editingImportReceipt, setEditingImportReceipt] = useState<StockImportReceipt | null>(null);
+  const [selectedReceiptDetail, setSelectedReceiptDetail] = useState<StockImportReceipt | null>(null);
   const [receiptToDelete, setReceiptToDelete] = useState<StockImportReceipt | null>(null);
   const [isClearInventoryModalOpen, setIsClearInventoryModalOpen] = useState(false);
   const [isClearStockImportsModalOpen, setIsClearStockImportsModalOpen] = useState(false);
   const [isBOMGuideOpen, setIsBOMGuideOpen] = useState(false);
 
-  // Material Form state
+  // Material Form state (Đã bỏ formCostPrice)
   const [formCode, setFormCode] = useState('');
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState<MaterialCategory>('Gỗ MDF');
   const [formUnit, setFormUnit] = useState('Tấm');
-  const [formCostPrice, setFormCostPrice] = useState<number>(0);
   const [formStockQuantity, setFormStockQuantity] = useState<number>(0);
   const [formMinStockAlert, setFormMinStockAlert] = useState<number>(5);
   const [formSupplier, setFormSupplier] = useState('');
   const [formNotes, setFormNotes] = useState('');
 
-  // Import Receipt Form state
+  // Manual Inward Form State (Nhập giá trị vật tư thủ công theo đợt & NCC)
   const [importDate, setImportDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [importSupplier, setImportSupplier] = useState<string>('');
+  const [importItemName, setImportItemName] = useState<string>('');
+  const [importAmount, setImportAmount] = useState<number>(0);
+  const [importQuantity, setImportQuantity] = useState<number>(1);
+  const [importUnit, setImportUnit] = useState<string>('Lô');
   const [importNotes, setImportNotes] = useState<string>('');
-  const [importItems, setImportItems] = useState<Array<{
-    materialId: string;
-    quantity: number;
-    costPrice: number;
-  }>>([]);
+  const [importReceiptCode, setImportReceiptCode] = useState<string>('');
 
   // Available categories
   const categories: MaterialCategory[] = [
@@ -94,19 +104,19 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
     'Keo & Màng Lụa'
   ];
 
-  // 1. KPI Calculations
+  // 1. KPI Calculations for Warehouse & Inventory
   const totalMaterialCount = materials.length;
   
   const totalStockQuantity = useMemo(() => {
     return materials.reduce((sum, m) => sum + (m.stockQuantity || 0), 0);
   }, [materials]);
 
-  const totalInventoryValue = useMemo(() => {
-    return materials.reduce((sum, m) => sum + (m.stockQuantity || 0) * (m.costPrice || 0), 0);
-  }, [materials]);
-
   const lowStockMaterials = useMemo(() => {
     return materials.filter(m => m.stockQuantity > 0 && m.stockQuantity <= m.minStockAlert);
+  }, [materials]);
+
+  const outOfStockMaterials = useMemo(() => {
+    return materials.filter(m => m.stockQuantity <= 0);
   }, [materials]);
 
   // Material Usage Calculations (Đồng bộ số lượng đã sử dụng từ toàn bộ đơn bán hàng)
@@ -122,15 +132,111 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
     return orders.filter(o => o.status !== 'cancelled').length;
   }, [orders]);
 
-  const outOfStockMaterials = useMemo(() => {
-    return materials.filter(m => m.stockQuantity <= 0);
-  }, [materials]);
+  // 2. Years available from stock imports
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<number>();
+    yearsSet.add(currentYear);
+    stockImports.forEach(imp => {
+      const y = new Date(imp.date).getFullYear();
+      if (!isNaN(y)) yearsSet.add(y);
+    });
+    return Array.from(yearsSet).sort((a, b) => b - a);
+  }, [stockImports, currentYear]);
 
-  const totalHistoricalImportCost = useMemo(() => {
-    return stockImports.reduce((sum, imp) => sum + (imp.totalAmount || 0), 0);
-  }, [stockImports]);
+  // Total Inward Value for Current Year (hoặc năm được chọn)
+  const currentYearTotalInward = useMemo(() => {
+    return stockImports
+      .filter(imp => new Date(imp.date).getFullYear() === currentYear)
+      .reduce((sum, imp) => sum + (imp.totalAmount || 0), 0);
+  }, [stockImports, currentYear]);
 
-  // 2. Filter materials
+  // All Unique Suppliers
+  const allSuppliersList = useMemo(() => {
+    const suppSet = new Set<string>();
+    stockImports.forEach(imp => {
+      if (imp.supplier && imp.supplier.trim()) suppSet.add(imp.supplier.trim());
+    });
+    materials.forEach(m => {
+      if (m.supplier && m.supplier.trim()) suppSet.add(m.supplier.trim());
+    });
+    return Array.from(suppSet).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [stockImports, materials]);
+
+  // 3. Filtered Stock Imports for Selected Year & Supplier
+  const filteredStockImportsForExpenseTab = useMemo(() => {
+    return stockImports.filter(imp => {
+      const impYear = new Date(imp.date).getFullYear();
+      if (selectedYear !== 'all' && impYear !== selectedYear) return false;
+      if (selectedSupplierFilter !== 'all' && imp.supplier !== selectedSupplierFilter) return false;
+
+      if (supplierSearchQuery.trim()) {
+        const query = supplierSearchQuery.toLowerCase();
+        const matchSupplier = imp.supplier.toLowerCase().includes(query);
+        const matchReceipt = imp.receiptNumber.toLowerCase().includes(query);
+        const matchNote = imp.notes ? imp.notes.toLowerCase().includes(query) : false;
+        const matchItem = imp.items.some(it => it.materialName.toLowerCase().includes(query) || it.materialCode.toLowerCase().includes(query));
+        if (!matchSupplier && !matchReceipt && !matchNote && !matchItem) return false;
+      }
+
+      return true;
+    });
+  }, [stockImports, selectedYear, selectedSupplierFilter, supplierSearchQuery]);
+
+  // Total amount for the selected filter view
+  const selectedViewTotalExpense = useMemo(() => {
+    return filteredStockImportsForExpenseTab.reduce((sum, imp) => sum + (imp.totalAmount || 0), 0);
+  }, [filteredStockImportsForExpenseTab]);
+
+  // 4. Annual Supplier Summary Aggregation (Tổng cả năm mỗi nhà cung cấp có giá trị bao nhiêu tiền)
+  const supplierAnnualSummaries = useMemo(() => {
+    // Filter imports by selected year first
+    const yearImports = selectedYear === 'all'
+      ? stockImports
+      : stockImports.filter(imp => new Date(imp.date).getFullYear() === selectedYear);
+
+    const supplierMap: Record<string, {
+      supplierName: string;
+      totalYearAmount: number;
+      batchCount: number;
+      itemsList: Set<string>;
+      latestDate: string;
+    }> = {};
+
+    yearImports.forEach(imp => {
+      const supp = imp.supplier?.trim() || 'Nhà Cung Cấp Khác';
+      if (!supplierMap[supp]) {
+        supplierMap[supp] = {
+          supplierName: supp,
+          totalYearAmount: 0,
+          batchCount: 0,
+          itemsList: new Set<string>(),
+          latestDate: imp.date
+        };
+      }
+
+      supplierMap[supp].totalYearAmount += (imp.totalAmount || 0);
+      supplierMap[supp].batchCount += 1;
+      if (new Date(imp.date).getTime() > new Date(supplierMap[supp].latestDate).getTime()) {
+        supplierMap[supp].latestDate = imp.date;
+      }
+
+      imp.items.forEach(it => {
+        if (it.materialName) supplierMap[supp].itemsList.add(it.materialName);
+      });
+    });
+
+    const totalAllSuppliersAmount = Object.values(supplierMap).reduce((sum, s) => sum + s.totalYearAmount, 0);
+
+    return Object.values(supplierMap)
+      .map(s => ({
+        ...s,
+        itemsSummary: Array.from(s.itemsList).join(', '),
+        percentage: totalAllSuppliersAmount > 0 ? (s.totalYearAmount / totalAllSuppliersAmount) * 100 : 0
+      }))
+      .sort((a, b) => b.totalYearAmount - a.totalYearAmount);
+  }, [stockImports, selectedYear]);
+
+  // 5. Filter materials for Inventory Table
   const filteredMaterials = useMemo(() => {
     return materials.filter(m => {
       // Search
@@ -159,7 +265,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
     });
   }, [materials, searchQuery, selectedCategory, statusFilter]);
 
-  // Handlers for Material CRUD
+  // Handlers for Material CRUD (Đã bỏ giá nhập)
   const handleOpenAddModal = (mat?: Material) => {
     if (mat) {
       setEditingMaterial(mat);
@@ -167,7 +273,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
       setFormName(mat.name);
       setFormCategory(mat.category);
       setFormUnit(mat.unit);
-      setFormCostPrice(mat.costPrice);
       setFormStockQuantity(mat.stockQuantity);
       setFormMinStockAlert(mat.minStockAlert);
       setFormSupplier(mat.supplier || '');
@@ -178,7 +283,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
       setFormName('');
       setFormCategory('Gỗ MDF');
       setFormUnit('Tấm');
-      setFormCostPrice(35000);
       setFormStockQuantity(10);
       setFormMinStockAlert(5);
       setFormSupplier('');
@@ -200,7 +304,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
       name: formName.trim(),
       category: formCategory,
       unit: formUnit.trim() || 'Cái',
-      costPrice: Number(formCostPrice) || 0,
+      costPrice: editingMaterial ? (editingMaterial.costPrice || 0) : 0,
       stockQuantity: Number(formStockQuantity) || 0,
       minStockAlert: Number(formMinStockAlert) || 5,
       supplier: formSupplier.trim() || undefined,
@@ -213,113 +317,81 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
     setIsAddMaterialModalOpen(false);
   };
 
-  // Handlers for Stock Import Receipt Modal
-  const handleOpenNewImport = (presetMaterial?: Material) => {
+  // Open Manual Inward Modal (Nhập giá trị vật tư thủ công theo đợt)
+  const handleOpenManualInward = (presetSupplier?: string) => {
+    setEditingImportReceipt(null);
     setImportDate(new Date().toISOString().slice(0, 10));
-    setImportSupplier(presetMaterial?.supplier || 'Xưởng Cung Cấp Vật Tư Hà Nội');
+    setImportSupplier(presetSupplier || (allSuppliersList[0] || ''));
+    setImportItemName('');
+    setImportAmount(0);
+    setImportQuantity(1);
+    setImportUnit('Lô');
     setImportNotes('');
-
-    if (presetMaterial) {
-      setImportItems([
-        {
-          materialId: presetMaterial.id,
-          quantity: 10,
-          costPrice: presetMaterial.costPrice
-        }
-      ]);
-    } else if (materials.length > 0) {
-      setImportItems([
-        {
-          materialId: materials[0].id,
-          quantity: 10,
-          costPrice: materials[0].costPrice
-        }
-      ]);
-    } else {
-      setImportItems([]);
-    }
-
+    setImportReceiptCode(`NK-194-${new Date().getFullYear()}-${(stockImports.length + 1).toString().padStart(3, '0')}`);
     setIsNewImportModalOpen(true);
   };
 
-  const handleAddImportItemRow = () => {
-    if (materials.length === 0) return;
-    setImportItems(prev => [
-      ...prev,
-      {
-        materialId: materials[0].id,
-        quantity: 10,
-        costPrice: materials[0].costPrice
-      }
-    ]);
+  const handleOpenEditImport = (receipt: StockImportReceipt) => {
+    setEditingImportReceipt(receipt);
+    setImportDate(receipt.date);
+    setImportSupplier(receipt.supplier);
+    const firstItem = receipt.items[0];
+    setImportItemName(receipt.items.map(it => it.materialName).join(', '));
+    setImportAmount(receipt.totalAmount);
+    setImportQuantity(firstItem ? firstItem.quantity : 1);
+    setImportUnit(firstItem ? firstItem.unit : 'Lô');
+    setImportNotes(receipt.notes || '');
+    setImportReceiptCode(receipt.receiptNumber);
+    setIsNewImportModalOpen(true);
   };
 
-  const handleRemoveImportItemRow = (index: number) => {
-    setImportItems(prev => prev.filter((_, idx) => idx !== index));
-  };
-
-  const handleImportItemChange = (index: number, field: 'materialId' | 'quantity' | 'costPrice', value: any) => {
-    setImportItems(prev => {
-      const copy = [...prev];
-      if (field === 'materialId') {
-        const selMat = materials.find(m => m.id === value);
-        copy[index] = {
-          ...copy[index],
-          materialId: value,
-          costPrice: selMat ? selMat.costPrice : copy[index].costPrice
-        };
-      } else {
-        copy[index] = {
-          ...copy[index],
-          [field]: value
-        };
-      }
-      return copy;
-    });
-  };
-
-  const calculatedImportTotal = useMemo(() => {
-    return importItems.reduce((sum, item) => sum + (item.quantity * item.costPrice), 0);
-  }, [importItems]);
-
-  const handleSaveImportSubmit = (e: React.FormEvent) => {
+  const handleSaveManualInwardSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (importItems.length === 0) {
-      alert('Vui lòng thêm ít nhất 1 vật liệu để nhập kho!');
+    if (!importSupplier.trim()) {
+      alert('Vui lòng nhập tên nhà cung cấp!');
+      return;
+    }
+    if (!importItemName.trim()) {
+      alert('Vui lòng nhập tên mặt hàng / vật tư nhập!');
+      return;
+    }
+    if (importAmount <= 0) {
+      alert('Vui lòng nhập giá trị / số tiền đợt nhập!');
       return;
     }
 
-    const items: StockImportItem[] = importItems.map((it, idx) => {
-      const mat = materials.find(m => m.id === it.materialId);
-      return {
-        id: `ii-${Date.now()}-${idx}`,
-        materialId: it.materialId,
-        materialCode: mat?.code || 'VT-UNKNOWN',
-        materialName: mat?.name || 'Vật tư',
-        unit: mat?.unit || 'Cái',
-        quantity: Number(it.quantity) || 0,
-        costPrice: Number(it.costPrice) || 0,
-        totalCost: (Number(it.quantity) || 0) * (Number(it.costPrice) || 0)
-      };
-    });
+    const receiptId = editingImportReceipt ? editingImportReceipt.id : `imp-${Date.now()}`;
+    const code = importReceiptCode.trim() || `NK-194-${new Date().getFullYear()}-${(stockImports.length + 1).toString().padStart(3, '0')}`;
+
+    // Create item record
+    const singleItem: StockImportItem = {
+      id: `ii-${Date.now()}-0`,
+      materialId: `custom-mat-${Date.now()}`,
+      materialCode: 'VT-NHAP',
+      materialName: importItemName.trim(),
+      unit: importUnit.trim() || 'Lô',
+      quantity: Number(importQuantity) || 1,
+      costPrice: importAmount / (Number(importQuantity) || 1),
+      totalCost: importAmount
+    };
 
     const newReceipt: StockImportReceipt = {
-      id: `imp-${Date.now()}`,
-      receiptNumber: `NK-194-${new Date().getFullYear()}-${(stockImports.length + 1).toString().padStart(3, '0')}`,
+      id: receiptId,
+      receiptNumber: code,
       date: importDate,
-      supplier: importSupplier.trim() || 'Nhà Cung Cấp',
-      items,
-      totalAmount: calculatedImportTotal,
-      paid: calculatedImportTotal,
+      supplier: importSupplier.trim(),
+      items: [singleItem],
+      totalAmount: importAmount,
+      paid: importAmount,
       notes: importNotes.trim() || undefined,
-      createdAt: new Date().toISOString()
+      createdAt: editingImportReceipt ? editingImportReceipt.createdAt : new Date().toISOString()
     };
 
     onSaveStockImport(newReceipt);
     setIsNewImportModalOpen(false);
   };
 
-  // Adjust stock handler
+  // Adjust stock handler (Kiểm kê thực tế)
   const handleOpenAdjustModal = (mat: Material) => {
     setAdjustingMaterial(mat);
     setAdjustQty(mat.stockQuantity);
@@ -348,7 +420,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                 KHO NHẬP LIỆU & VẬT TƯ TIỆM IN 194
               </h2>
               <p className="text-xs sm:text-sm text-slate-300 font-medium">
-                Quản lý số lượng tồn kho, giá vốn nhập hàng, cảnh báo sắp hết và hạch toán lời lãi
+                Quản lý số lượng tồn kho, cảnh báo sắp hết và theo dõi chi tiết giá trị nhập hàng theo từng nhà cung cấp
               </p>
             </div>
           </div>
@@ -357,11 +429,11 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
           <button
             type="button"
-            onClick={() => handleOpenNewImport()}
+            onClick={() => handleOpenManualInward()}
             className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-emerald-500/20 transition cursor-pointer"
           >
             <PackagePlus className="w-4 h-4" />
-            <span>+ Tạo Phiếu Nhập Kho</span>
+            <span>+ Nhập Giá Trị Đợt Mới</span>
           </button>
 
           <button
@@ -380,12 +452,12 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             title="Xóa trắng dữ liệu kho hoặc đặt lại số lượng tồn kho"
           >
             <Trash2 className="w-4 h-4 text-rose-400" />
-            <span>Xóa Hết Dữ Liệu Kho</span>
+            <span>Xóa Dữ Liệu Kho</span>
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards (Đã bỏ giá trị tồn kho) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         {/* Card 1: Tổng loại vật tư */}
         <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
@@ -431,21 +503,12 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
           </p>
         </div>
 
-        {/* Card 4: Tổng giá trị vốn tồn kho */}
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider">Tổng giá trị tồn kho</span>
-            <DollarSign className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-amber-700 font-mono truncate" title={formatCurrency(totalInventoryValue)}>
-            {formatCurrency(totalInventoryValue)}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">Vốn vật tư còn tại kho</p>
-        </div>
-
-        {/* Card 5: Sắp hết hàng */}
+        {/* Card 4: Sắp hết hàng */}
         <div
-          onClick={() => setStatusFilter(statusFilter === 'low' ? 'all' : 'low')}
+          onClick={() => {
+            setActiveSubTab('inventory');
+            setStatusFilter(statusFilter === 'low' ? 'all' : 'low');
+          }}
           className={`rounded-xl p-4 shadow-sm border transition cursor-pointer ${
             lowStockMaterials.length > 0
               ? 'bg-rose-50 border-rose-200 hover:bg-rose-100/80 ring-2 ring-rose-400/30'
@@ -467,25 +530,44 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
           </p>
         </div>
 
-        {/* Card 6: Tổng giá nhập các đợt */}
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 col-span-2 md:col-span-1">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider">Tổng tiền đã nhập</span>
-            <Truck className="w-4 h-4 text-indigo-600" />
+        {/* Card 5: Tổng giá trị vật tư nhập trong năm */}
+        <div
+          onClick={() => setActiveSubTab('supplier_expenses')}
+          className="bg-amber-50/70 border border-amber-200 hover:bg-amber-100/70 rounded-xl p-4 shadow-sm transition cursor-pointer"
+          title="Bấm để xem chi tiết theo dõi giá trị nhập theo từng nhà cung cấp"
+        >
+          <div className="flex items-center justify-between text-amber-700 mb-1">
+            <span className="text-xs font-black uppercase tracking-wider">Tổng Nhập Năm {currentYear}</span>
+            <DollarSign className="w-4 h-4 text-amber-600" />
           </div>
-          <div className="text-xl sm:text-2xl font-black text-indigo-900 font-mono truncate" title={formatCurrency(totalHistoricalImportCost)}>
-            {formatCurrency(totalHistoricalImportCost)}
+          <div className="text-xl sm:text-2xl font-black text-amber-800 font-mono truncate" title={formatCurrency(currentYearTotalInward)}>
+            {formatCurrency(currentYearTotalInward)}
+          </div>
+          <p className="text-[11px] text-amber-700 font-medium mt-1">Giá trị vật tư nhập năm nay</p>
+        </div>
+
+        {/* Card 6: Số Nhà Cung Cấp */}
+        <div
+          onClick={() => setActiveSubTab('supplier_expenses')}
+          className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 col-span-2 md:col-span-1 cursor-pointer hover:bg-slate-50 transition"
+        >
+          <div className="flex items-center justify-between text-slate-500 mb-1">
+            <span className="text-xs font-bold uppercase tracking-wider">Nhà Cung Cấp</span>
+            <Building2 className="w-4 h-4 text-indigo-600" />
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-indigo-900 font-mono">
+            {allSuppliersList.length} <span className="text-xs font-normal text-slate-500">đơn vị</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1">{stockImports.length} đợt nhập hàng</p>
         </div>
       </div>
 
-      {/* Sub Tabs: Kho Tồn Hiện Tại vs Lịch Sử Phiếu Nhập */}
-      <div className="flex items-center gap-2 border-b border-slate-200">
+      {/* Sub Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto">
         <button
           type="button"
           onClick={() => setActiveSubTab('inventory')}
-          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer shrink-0 ${
             activeSubTab === 'inventory'
               ? 'border-amber-500 text-amber-700 bg-amber-50/50'
               : 'border-transparent text-slate-600 hover:text-slate-900'
@@ -502,21 +584,34 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
 
         <button
           type="button"
+          onClick={() => setActiveSubTab('supplier_expenses')}
+          className={`flex items-center gap-2 px-4 py-2.5 font-black text-sm border-b-2 transition cursor-pointer shrink-0 ${
+            activeSubTab === 'supplier_expenses'
+              ? 'border-amber-500 text-amber-800 bg-amber-50/60 shadow-2xs'
+              : 'border-transparent text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Building2 className="w-4 h-4 text-amber-600" />
+          <span>Theo Dõi Giá Trị Nhập Vào & NCC ({allSuppliersList.length})</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveSubTab('history')}
-          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer shrink-0 ${
             activeSubTab === 'history'
               ? 'border-amber-500 text-amber-700 bg-amber-50/50'
               : 'border-transparent text-slate-600 hover:text-slate-900'
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>Lịch Sử Phiếu Nhập Kho ({stockImports.length})</span>
+          <span>Lịch Sử Các Đợt Nhập ({stockImports.length})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('sales_deductions')}
-          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 font-bold text-sm border-b-2 transition cursor-pointer shrink-0 ${
             activeSubTab === 'sales_deductions'
               ? 'border-amber-500 text-amber-700 bg-amber-50/50'
               : 'border-transparent text-slate-600 hover:text-slate-900'
@@ -526,19 +621,19 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
           <span>Vật Tư Trừ Theo Đơn Bán Hàng</span>
         </button>
 
-        <div className="ml-auto hidden sm:block">
+        <div className="ml-auto hidden lg:block">
           <button
             type="button"
             onClick={() => setIsBOMGuideOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition cursor-pointer"
           >
             <BookOpen className="w-3.5 h-3.5 text-amber-700" />
-            <span>📘 Định Mức Cốt Ảnh: Ván MDF & Fomex (BOM)</span>
+            <span>📘 Định Mức Cốt Ảnh (BOM)</span>
           </button>
         </div>
       </div>
 
-      {/* SUB-TAB 1: INVENTORY LIST */}
+      {/* SUB-TAB 1: INVENTORY LIST (ĐÃ BỎ CỘT GIÁ NHẬP & GIÁ TRỊ TỒN KHO) */}
       {activeSubTab === 'inventory' && (
         <div className="space-y-4">
           {/* Search & Filter Toolbar */}
@@ -622,7 +717,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             </div>
           </div>
 
-          {/* Materials Table */}
+          {/* Materials Table (Không còn cột Giá Nhập & Tổng Giá Trị Tồn) */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
@@ -630,23 +725,21 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
                     <th className="py-3 px-3 w-12 text-center">STT</th>
                     <th className="py-3 px-3 w-28">Mã Vật Tư</th>
-                    <th className="py-3 px-3">Tên Vật Liệu</th>
-                    <th className="py-3 px-3 w-28">Nhóm</th>
+                    <th className="py-3 px-3">Tên Vật Liệu & Quy Cách</th>
+                    <th className="py-3 px-3 w-32">Nhóm</th>
                     <th className="py-3 px-2 w-16 text-center">ĐVT</th>
-                    <th className="py-3 px-3 w-28 text-right">Giá Nhập</th>
                     <th className="py-3 px-3 w-32 text-center bg-purple-50 text-purple-950 font-black border-x border-purple-200">
-                      Đã Sử Dụng
+                      Đã Xuất Bán
                     </th>
-                    <th className="py-3 px-3 w-36 text-center">SL Tồn Kho</th>
-                    <th className="py-3 px-3 w-32 text-right">Tổng Giá Trị Tồn</th>
-                    <th className="py-3 px-3 w-32 text-center">Tình Trạng</th>
+                    <th className="py-3 px-3 w-40 text-center">SL Tồn Kho</th>
+                    <th className="py-3 px-3 w-36 text-center">Tình Trạng</th>
                     <th className="py-3 px-3 w-36 text-center">Thao Tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredMaterials.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-400">
+                      <td colSpan={9} className="py-12 text-center text-slate-400">
                         <Boxes className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                         <p className="font-semibold text-slate-600">Không tìm thấy vật liệu nào phù hợp</p>
                         <p className="text-xs text-slate-400 mt-1">Hãy thử xóa bộ lọc hoặc bấm "+ Thêm Vật Liệu"</p>
@@ -656,7 +749,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                     filteredMaterials.map((mat, idx) => {
                       const isLow = mat.stockQuantity > 0 && mat.stockQuantity <= mat.minStockAlert;
                       const isOut = mat.stockQuantity <= 0;
-                      const totalItemValue = mat.stockQuantity * mat.costPrice;
                       const usage = materialUsageMap[mat.id];
 
                       return (
@@ -688,9 +780,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                             </span>
                           </td>
                           <td className="py-3 px-2 text-center font-semibold text-slate-700">{mat.unit}</td>
-                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-xs sm:text-sm">
-                            {formatCurrency(mat.costPrice)}
-                          </td>
                           <td className="py-3 px-3 text-center bg-purple-50/30 border-x border-purple-100">
                             {usage && usage.usedQuantity > 0 ? (
                               <div className="flex flex-col items-center">
@@ -721,9 +810,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                               </span>
                             </div>
                           </td>
-                          <td className="py-3 px-3 text-right font-mono font-bold text-amber-700 text-xs sm:text-sm">
-                            {formatCurrency(totalItemValue)}
-                          </td>
                           <td className="py-3 px-3 text-center">
                             {isOut ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-slate-200 text-slate-700 border border-slate-300">
@@ -741,22 +827,12 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                           </td>
                           <td className="py-3 px-3 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {/* Quick Import Button */}
-                              <button
-                                type="button"
-                                onClick={() => handleOpenNewImport(mat)}
-                                className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition"
-                                title="Nhập thêm vật liệu này vào kho"
-                              >
-                                <PackagePlus className="w-3.5 h-3.5" />
-                              </button>
-
                               {/* Adjust / Use stock button */}
                               <button
                                 type="button"
                                 onClick={() => handleOpenAdjustModal(mat)}
                                 className="p-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition"
-                                title="Xuất dùng hoặc điều chỉnh tồn kho"
+                                title="Kiểm kê thực tế hoặc điều chỉnh tồn kho"
                               >
                                 <RefreshCw className="w-3.5 h-3.5" />
                               </button>
@@ -793,13 +869,370 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* SUB-TAB 2: IMPORT HISTORY */}
+      {/* ========================================================================= */}
+      {/* SUB-TAB 2: THEO DÕI GIÁ TRỊ NHẬP VÀO & NHÀ CUNG CẤP (NEW & DEDICATED) */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'supplier_expenses' && (
+        <div className="space-y-6">
+          {/* Top Control Bar & Year Selector */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-amber-600" />
+                  <span>THEO DÕI GIÁ TRỊ VẬT TƯ NHẬP VÀO & NHÀ CUNG CẤP</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Nhập giá trị thủ công từng đợt hàng, tự động tổng hợp chi phí cả năm theo từng nhà cung cấp và từng mặt hàng
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleOpenManualInward()}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs sm:text-sm font-black shadow-md shadow-emerald-600/20 transition cursor-pointer shrink-0"
+              >
+                <PackagePlus className="w-4 h-4" />
+                <span>+ Nhập Giá Trị Đợt Mới</span>
+              </button>
+            </div>
+
+            {/* Filter controls: Year & Supplier & Search */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+              {/* Year Filter buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-bold text-slate-600 mr-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  Năm:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                    selectedYear === 'all'
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Tất cả các năm
+                </button>
+                {availableYears.map(yr => (
+                  <button
+                    key={yr}
+                    type="button"
+                    onClick={() => setSelectedYear(yr)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                      selectedYear === yr
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Năm {yr}
+                  </button>
+                ))}
+              </div>
+
+              {/* Supplier Filter & Search */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={selectedSupplierFilter}
+                  onChange={e => setSelectedSupplierFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none"
+                >
+                  <option value="all">Tất cả Nhà Cung Cấp ({allSuppliersList.length})</option>
+                  {allSuppliersList.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={supplierSearchQuery}
+                    onChange={e => setSupplierSearchQuery(e.target.value)}
+                    placeholder="Tìm mặt hàng, NCC..."
+                    className="pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none w-44"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* KPI Summary for the Selected Year/Filter */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-white p-4 rounded-2xl border-2 border-amber-300 shadow-xs">
+              <div className="flex items-center justify-between text-amber-800 mb-1">
+                <span className="text-xs font-extrabold uppercase tracking-wider">
+                  Tổng Chi Phí Nhập {selectedYear === 'all' ? 'Toàn Bộ' : `Năm ${selectedYear}`}
+                </span>
+                <DollarSign className="w-5 h-5 text-amber-600" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-amber-900 font-mono mt-1">
+                {formatCurrency(selectedViewTotalExpense)}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Tổng giá trị vật tư nhập vào hệ thống
+              </p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider">Số Nhà Cung Cấp</span>
+                <Building2 className="w-5 h-5 text-blue-600" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono mt-1">
+                {supplierAnnualSummaries.length} <span className="text-xs font-normal text-slate-500">đơn vị</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Phát sinh đợt nhập trong {selectedYear === 'all' ? 'toàn bộ thời gian' : `năm ${selectedYear}`}
+              </p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider">Số Đợt Nhập Hàng</span>
+                <FileText className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono mt-1">
+                {filteredStockImportsForExpenseTab.length} <span className="text-xs font-normal text-slate-500">đợt</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Đã ghi nhận phiếu nhập thủ công
+              </p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider">Trung Bình Mỗi Đợt</span>
+                <PieChart className="w-5 h-5 text-purple-600" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-purple-800 font-mono mt-1">
+                {formatCurrency(
+                  filteredStockImportsForExpenseTab.length > 0
+                    ? Math.round(selectedViewTotalExpense / filteredStockImportsForExpenseTab.length)
+                    : 0
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Giá trị trung bình 1 lần mua hàng
+              </p>
+            </div>
+          </div>
+
+          {/* TABLE 1: BẢNG TỔNG HỢP CẢ NĂM THEO TỪNG NHÀ CUNG CẤP */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+            <div className="p-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-amber-500 text-slate-950 rounded-lg">
+                  <Building2 className="w-4 h-4" />
+                </span>
+                <div>
+                  <h4 className="font-extrabold text-sm uppercase tracking-wide">
+                    BẢNG TỔNG HỢP GIÁ TRỊ NHẬP CẢ NĂM THEO TỪNG NHÀ CUNG CẤP ({selectedYear === 'all' ? 'TẤT CẢ CÁC NĂM' : `NĂM ${selectedYear}`})
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Thống kê chi tiết mặt hàng và tổng số tiền đã nhập của từng nhà cung cấp
+                  </p>
+                </div>
+              </div>
+              <div className="text-xs font-bold bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
+                Tổng cộng: <strong className="text-amber-400 font-mono text-sm ml-1">{formatCurrency(selectedViewTotalExpense)}</strong>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
+                    <th className="py-3 px-3 w-12 text-center">STT</th>
+                    <th className="py-3 px-4 w-60">Tên Nhà Cung Cấp</th>
+                    <th className="py-3 px-3">Mặt Hàng Đã Nhập Từ NCC Này</th>
+                    <th className="py-3 px-3 w-28 text-center">Số Đợt Nhập</th>
+                    <th className="py-3 px-4 w-44 text-right">Tổng Tiền Cả Năm</th>
+                    <th className="py-3 px-3 w-32 text-center">Tỷ Trọng (%)</th>
+                    <th className="py-3 px-3 w-28 text-center">Thao Tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {supplierAnnualSummaries.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        Chưa có dữ liệu nhập hàng nào trong {selectedYear === 'all' ? 'hệ thống' : `năm ${selectedYear}`}
+                      </td>
+                    </tr>
+                  ) : (
+                    supplierAnnualSummaries.map((s, idx) => (
+                      <tr key={s.supplierName} className="hover:bg-amber-50/40 transition">
+                        <td className="py-3.5 px-3 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="py-3.5 px-4">
+                          <div className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5">
+                            <Building2 className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>{s.supplierName}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Lần nhập gần nhất: <span className="font-mono text-slate-600 font-semibold">{formatDateVN(s.latestDate)}</span>
+                          </p>
+                        </td>
+                        <td className="py-3.5 px-3">
+                          <p className="text-slate-800 font-medium leading-relaxed">
+                            {s.itemsSummary || 'Vật tư tổng hợp'}
+                          </p>
+                        </td>
+                        <td className="py-3.5 px-3 text-center">
+                          <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-800 font-bold font-mono text-xs">
+                            {s.batchCount} đợt
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="font-mono font-black text-base text-rose-700">
+                            {formatCurrency(s.totalYearAmount)}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-3 text-center">
+                          <div className="w-full flex flex-col items-center gap-1">
+                            <span className="font-mono font-bold text-slate-700">
+                              {s.percentage.toFixed(1)}%
+                            </span>
+                            <div className="w-20 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-amber-500 h-full rounded-full"
+                                style={{ width: `${Math.min(100, Math.max(5, s.percentage))}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSupplierFilter(s.supplierName);
+                            }}
+                            className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition cursor-pointer"
+                          >
+                            Xem đợt nhập
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* TABLE 2: BẢNG KÊ CHI TIẾT TỪNG ĐỢT NHẬP VẬT TƯ THỦ CÔNG */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <span>DANH SÁCH CHI TIẾT TỪNG ĐỢT NHẬP HÀNG</span>
+                  <span className="text-xs font-normal text-slate-500">({filteredStockImportsForExpenseTab.length} phiếu)</span>
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Xem lại, chỉnh sửa số tiền hoặc xóa từng đợt nhập thủ công
+                </p>
+              </div>
+
+              {selectedSupplierFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierFilter('all')}
+                  className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Bỏ lọc NCC: {selectedSupplierFilter}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
+                    <th className="py-3 px-3 w-12 text-center">STT</th>
+                    <th className="py-3 px-3 w-32">Mã Phiếu</th>
+                    <th className="py-3 px-3 w-28">Ngày Nhập</th>
+                    <th className="py-3 px-4 w-52">Nhà Cung Cấp</th>
+                    <th className="py-3 px-3">Mặt Hàng Nhập</th>
+                    <th className="py-3 px-4 w-36 text-right">Giá Trị Nhập Đợt Này</th>
+                    <th className="py-3 px-3 w-32 text-center">Thao Tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredStockImportsForExpenseTab.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        Không có đợt nhập hàng nào phù hợp với bộ lọc hiện tại
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredStockImportsForExpenseTab.map((imp, idx) => (
+                      <tr key={imp.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-3 px-3 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="py-3 px-3 font-mono font-bold text-slate-900">{imp.receiptNumber}</td>
+                        <td className="py-3 px-3 font-mono text-slate-600">{formatDateVN(imp.date)}</td>
+                        <td className="py-3 px-4">
+                          <div className="font-extrabold text-slate-900 text-sm">{imp.supplier}</div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="space-y-1">
+                            {imp.items.map((it, iIdx) => (
+                              <div key={iIdx} className="text-slate-800 font-medium">
+                                • <strong>{it.materialName}</strong>
+                                {it.quantity > 1 && (
+                                  <span className="text-slate-500 font-mono ml-1">({it.quantity} {it.unit})</span>
+                                )}
+                              </div>
+                            ))}
+                            {imp.notes && (
+                              <p className="text-[11px] text-amber-700 italic mt-0.5">* Ghi chú: {imp.notes}</p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-black text-rose-700 text-sm">
+                          {formatCurrency(imp.totalAmount)}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditImport(imp)}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                              title="Chỉnh sửa đợt nhập này"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            {onDeleteStockImport && (
+                              <button
+                                type="button"
+                                onClick={() => setReceiptToDelete(imp)}
+                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition cursor-pointer"
+                                title="Xóa đợt nhập này"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 3: LỊCH SỬ CÁC ĐỢT NHẬP */}
       {activeSubTab === 'history' && (
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="font-extrabold text-sm text-slate-800">Lịch Sử Các Đợt Nhập Hàng</h3>
+                <h3 className="font-extrabold text-sm text-slate-800">Toàn Bộ Lịch Sử Các Đợt Nhập Hàng</h3>
                 <p className="text-xs text-slate-500">Toàn bộ chi phí nhập kho được tự động đưa vào báo cáo lời lãi ({stockImports.length} phiếu)</p>
               </div>
               <div className="flex items-center gap-2">
@@ -816,7 +1249,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                 )}
                 <button
                   type="button"
-                  onClick={() => handleOpenNewImport()}
+                  onClick={() => handleOpenManualInward()}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -833,7 +1266,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                     <th className="py-3 px-3 w-32">Mã Phiếu Nhập</th>
                     <th className="py-3 px-3 w-28">Ngày Nhập</th>
                     <th className="py-3 px-3">Nhà Cung Cấp / Nguồn Hàng</th>
-                    <th className="py-3 px-3">Chi Tiết Vật Tư Nhập</th>
+                    <th className="py-3 px-3">Chi Tiết Mặt Hàng Nhập</th>
                     <th className="py-3 px-3 w-32 text-right">Tổng Tiền Nhập</th>
                     <th className="py-3 px-3 w-28 text-center">Thao Tác</th>
                   </tr>
@@ -901,7 +1334,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* SUB-TAB 3: SALES ORDERS MATERIAL DEDUCTIONS */}
+      {/* SUB-TAB 4: SALES ORDERS MATERIAL DEDUCTIONS */}
       {activeSubTab === 'sales_deductions' && (
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1001,14 +1434,14 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* MODAL 1: ADD / EDIT MATERIAL */}
+      {/* MODAL 1: ADD / EDIT MATERIAL (Đã bỏ giá nhập) */}
       {isAddMaterialModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 sm:p-6 border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
               <h3 className="font-black text-lg text-slate-900 flex items-center gap-2">
                 <Boxes className="w-5 h-5 text-amber-600" />
-                <span>{editingMaterial ? 'Chỉnh Sửa Vật Tư' : 'Thêm Vật Liệu Mới Vào Kho'}</span>
+                <span>{editingMaterial ? 'Chỉnh Sửa Thông Tin Vật Tư' : 'Thêm Vật Liệu Mới Vào Kho'}</span>
               </h3>
               <button
                 type="button"
@@ -1070,17 +1503,6 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-amber-500 outline-none"
                   />
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Giá Nhập Đơn Vị (VNĐ)</label>
-                  <MoneyInput
-                    value={formCostPrice}
-                    onChange={setFormCostPrice}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-amber-500 font-mono font-bold outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Số Lượng Tồn Ban Đầu</label>
                   <input
@@ -1092,7 +1514,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Ngưỡng Báo Sắp Hết</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Ngưỡng Báo Hết</label>
                   <input
                     type="number"
                     min={1}
@@ -1145,17 +1567,17 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* MODAL 2: CREATE STOCK IMPORT RECEIPT (Nhập Kho Vật Tư) */}
+      {/* MODAL 2: MANUAL INWARD EXPENSE (Nhập Giá Trị Vật Tư Thủ Công Theo Đợt & NCC) */}
       {isNewImportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-5 sm:p-6 border border-slate-200 max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-5 sm:p-6 border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
               <div>
                 <h3 className="font-black text-lg text-slate-900 flex items-center gap-2">
                   <PackagePlus className="w-5 h-5 text-emerald-600" />
-                  <span>Tạo Phiếu Nhập Kho Vật Tư</span>
+                  <span>{editingImportReceipt ? 'Chỉnh Sửa Đợt Nhập Hàng' : 'Nhập Giá Trị Vật Tư Vào Hệ Thống'}</span>
                 </h3>
-                <p className="text-xs text-slate-500">Số lượng nhập sẽ được tự động cộng dồn vào tồn kho</p>
+                <p className="text-xs text-slate-500">Ghi nhận chi phí mua vật tư thủ công theo từng nhà cung cấp</p>
               </div>
               <button
                 type="button"
@@ -1166,140 +1588,106 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
               </button>
             </div>
 
-            <form onSubmit={handleSaveImportSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <form onSubmit={handleSaveManualInwardSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Ngày Nhập Kho</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Ngày Nhập Hàng <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="date"
                     required
                     value={importDate}
                     onChange={e => setImportDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold font-mono outline-none"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold font-mono outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Nhà Cung Cấp / Nơi Nhập</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Mã Phiếu / Số Hóa Đơn
+                  </label>
                   <input
                     type="text"
-                    required
-                    value={importSupplier}
-                    onChange={e => setImportSupplier(e.target.value)}
-                    placeholder="VD: Cty Vật Tư Minh Khang, Xưởng Gỗ Phú Mỹ..."
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold outline-none"
+                    value={importReceiptCode}
+                    onChange={e => setImportReceiptCode(e.target.value)}
+                    placeholder="VD: NK-194-2026-001"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold outline-none"
                   />
                 </div>
               </div>
 
-              {/* Items in this import batch */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                    Danh Sách Vật Liệu Cần Nhập ({importItems.length})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleAddImportItemRow}
-                    className="flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 rounded-lg text-xs font-bold cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Thêm Dòng Vật Tư</span>
-                  </button>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Tên Nhà Cung Cấp / Nơi Mua <span className="text-rose-500">*</span>
+                  </label>
+                  {allSuppliersList.length > 0 && (
+                    <span className="text-[11px] text-slate-400">Chọn nhanh từ danh sách bên dưới</span>
+                  )}
                 </div>
+                <input
+                  type="text"
+                  required
+                  value={importSupplier}
+                  onChange={e => setImportSupplier(e.target.value)}
+                  placeholder="VD: Xưởng Gỗ Phú Mỹ, Cty Minh Khang, Tổng Kho Mica Hà Nội..."
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none"
+                />
 
-                <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-200">
-                  {importItems.map((item, idx) => {
-                    const selMat = materials.find(m => m.id === item.materialId);
-                    const lineTotal = item.quantity * item.costPrice;
-
-                    return (
-                      <div key={idx} className="p-3 bg-white hover:bg-slate-50/50 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-                        <div className="w-7 text-center font-mono font-bold text-slate-400 text-xs">
-                          #{idx + 1}
-                        </div>
-
-                        {/* Material Selector */}
-                        <div className="flex-1">
-                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Vật liệu</label>
-                          <select
-                            value={item.materialId}
-                            onChange={e => handleImportItemChange(idx, 'materialId', e.target.value)}
-                            className="w-full px-2.5 py-1.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg outline-none"
-                          >
-                            {materials.map(m => (
-                              <option key={m.id} value={m.id}>
-                                [{m.code}] {m.name} (Tồn hiện tại: {m.stockQuantity} {m.unit})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Quantity */}
-                        <div className="w-28">
-                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                            Số lượng nhập ({selMat?.unit || 'cái'})
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            required
-                            value={item.quantity}
-                            onChange={e => handleImportItemChange(idx, 'quantity', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="w-full px-2 py-1.5 text-xs font-black font-mono text-center bg-slate-50 border border-slate-300 rounded-lg text-emerald-700 outline-none"
-                          />
-                        </div>
-
-                        {/* Unit Cost */}
-                        <div className="w-36">
-                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Đơn giá nhập (VNĐ)</label>
-                          <MoneyInput
-                            value={item.costPrice}
-                            onChange={val => handleImportItemChange(idx, 'costPrice', val)}
-                            className="w-full px-2 py-1.5 text-xs font-bold font-mono text-right bg-slate-50 border border-slate-300 rounded-lg outline-none"
-                          />
-                        </div>
-
-                        {/* Line Total */}
-                        <div className="w-32 text-right">
-                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Thành tiền</label>
-                          <div className="text-xs font-black font-mono text-slate-900 py-1.5 truncate">
-                            {formatCurrency(lineTotal)}
-                          </div>
-                        </div>
-
-                        {/* Remove */}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveImportItemRow(idx)}
-                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition"
-                          title="Xóa dòng này"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Total Summary */}
-              <div className="bg-slate-900 text-white p-3.5 rounded-xl flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-semibold text-slate-400">TỔNG TIỀN PHIẾU NHẬP HÀNG:</span>
-                  <p className="text-[11px] text-slate-400">Được tự động tính vào chi phí vốn tháng {new Date(importDate).getMonth() + 1}</p>
-                </div>
-                <div className="text-2xl font-black font-mono text-amber-400">
-                  {formatCurrency(calculatedImportTotal)}
-                </div>
+                {/* Quick supplier chips */}
+                {allSuppliersList.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                    {allSuppliersList.slice(0, 6).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setImportSupplier(s)}
+                        className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 text-[11px] font-medium border border-slate-200 transition"
+                      >
+                        + {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Ghi Chú Phiếu Nhập</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mặt Hàng / Chủng Loại Vật Tư Nhập <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={importItemName}
+                  onChange={e => setImportItemName(e.target.value)}
+                  placeholder="VD: Gỗ MDF 60x90 (30 tấm), 4 Can Mực In UV, 10 Tấm Mica Trong..."
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none"
+                />
+              </div>
+
+              {/* Amount Inward */}
+              <div className="p-4 bg-amber-50/70 border-2 border-amber-300 rounded-2xl space-y-2">
+                <label className="block text-xs font-black text-amber-950 uppercase tracking-wide">
+                  GIÁ TRỊ / TỔNG SỐ TIỀN ĐỢT NHẬP NÀY (VNĐ) <span className="text-rose-600">*</span>
+                </label>
+                <MoneyInput
+                  value={importAmount}
+                  onChange={setImportAmount}
+                  className="w-full px-3.5 py-2.5 text-xl font-black font-mono text-rose-700 bg-white border border-amber-300 rounded-xl shadow-xs outline-none"
+                  placeholder="0 ₫"
+                />
+                <p className="text-[11px] text-slate-600">
+                  Số tiền này sẽ được tự động cộng dồn vào tổng chi phí nhập cả năm của nhà cung cấp <strong>{importSupplier || 'này'}</strong>.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Ghi Chú Đợt Nhập</label>
                 <input
                   type="text"
                   value={importNotes}
                   onChange={e => setImportNotes(e.target.value)}
-                  placeholder="Ghi chú số hóa đơn đỏ, người giao hàng, tình trạng vật tư..."
+                  placeholder="Ghi chú số hóa đơn VAT, hình thức thanh toán chuyển khoản / tiền mặt..."
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl outline-none"
                 />
               </div>
@@ -1316,7 +1704,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   type="submit"
                   className="px-6 py-2.5 text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-600/20 transition cursor-pointer"
                 >
-                  Xác Nhận Nhập Kho & Cập Nhật Tồn
+                  {editingImportReceipt ? 'Cập Nhật Đợt Nhập' : 'Lưu Đợt Nhập Hàng'}
                 </button>
               </div>
             </form>
@@ -1331,7 +1719,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
               <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
                 <RefreshCw className="w-4 h-4 text-blue-600" />
-                <span>Xuất Dùng / Điều Chỉnh Tồn Kho</span>
+                <span>Xuất Dùng / Kiểm Kê Tồn Kho</span>
               </h3>
               <button
                 type="button"
@@ -1408,121 +1796,26 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* MODAL 4: DETAIL RECEIPT VIEW */}
-      {selectedReceiptDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
-              <div>
-                <h3 className="font-black text-base text-slate-900">Chi Tiết Phiếu Nhập Kho</h3>
-                <p className="text-xs text-slate-500">Mã: {selectedReceiptDetail.receiptNumber} • Ngày: {formatDateVN(selectedReceiptDetail.date)}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedReceiptDetail(null)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
-                <p><strong>Nhà cung cấp:</strong> {selectedReceiptDetail.supplier}</p>
-                {selectedReceiptDetail.notes && <p><strong>Ghi chú:</strong> {selectedReceiptDetail.notes}</p>}
-              </div>
-
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                    <tr>
-                      <th className="p-2">Vật Tư</th>
-                      <th className="p-2 text-center">SL</th>
-                      <th className="p-2 text-right">Đơn Giá</th>
-                      <th className="p-2 text-right">Thành Tiền</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selectedReceiptDetail.items.map((it, idx) => (
-                      <tr key={idx}>
-                        <td className="p-2 font-medium">{it.materialName}</td>
-                        <td className="p-2 text-center font-bold font-mono">{it.quantity} {it.unit}</td>
-                        <td className="p-2 text-right font-mono">{formatCurrency(it.costPrice)}</td>
-                        <td className="p-2 text-right font-mono font-bold text-slate-900">{formatCurrency(it.totalCost)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="p-3 bg-slate-900 text-white rounded-xl flex items-center justify-between">
-                <span className="text-xs font-bold">TỔNG TIỀN THANH TOÁN:</span>
-                <span className="text-lg font-black font-mono text-amber-400">
-                  {formatCurrency(selectedReceiptDetail.totalAmount)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-4 border-t border-slate-200 mt-4">
-              <button
-                type="button"
-                onClick={() => setSelectedReceiptDetail(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONFIRMATION MODAL: DELETE MATERIAL */}
+      {/* MODAL 4: DELETE CONFIRMATION MATERIAL */}
       {materialToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-200">
-            <div className="p-4 bg-rose-600 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-white" />
-                <h3 className="font-bold text-sm">Xác Nhận Xóa Vật Liệu</h3>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5 border border-slate-200 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-base text-slate-900">Xóa Vật Tư Khỏi Kho?</h4>
+              <p className="text-xs text-slate-500 mt-1">
+                Bạn có chắc chắn muốn xóa vật liệu <strong className="text-slate-800">{materialToDelete.name}</strong> ({materialToDelete.code}) không?
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setMaterialToDelete(null)}
-                className="text-white/80 hover:text-white cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
               >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 space-y-3 text-xs text-slate-600">
-              <p>Bạn có chắc chắn muốn xóa vật liệu này khỏi danh mục kho?</p>
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Mã vật tư:</span>
-                  <span className="font-mono font-bold text-rose-700">{materialToDelete.code}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Tên vật liệu:</span>
-                  <span className="font-bold text-slate-900 text-right">{materialToDelete.name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Tồn kho hiện tại:</span>
-                  <span className="font-mono font-bold text-slate-800">{materialToDelete.stockQuantity} {materialToDelete.unit}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Giá nhập:</span>
-                  <span className="font-mono font-bold text-slate-800">{formatCurrency(materialToDelete.costPrice)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setMaterialToDelete(null)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer transition"
-              >
-                Hủy bỏ
+                Hủy Bỏ
               </button>
               <button
                 type="button"
@@ -1530,211 +1823,128 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   onDeleteMaterial(materialToDelete.id);
                   setMaterialToDelete(null);
                 }}
-                className="px-4 py-1.5 text-xs font-black bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-md cursor-pointer transition"
+                className="px-4 py-2 text-xs font-black text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-md cursor-pointer"
               >
-                Đồng Ý Xóa
+                Xác Nhận Xóa
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* CONFIRMATION MODAL: DELETE RECEIPT */}
-      {receiptToDelete && onDeleteStockImport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-200">
-            <div className="p-4 bg-rose-600 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-white" />
-                <h3 className="font-bold text-sm">Xóa Phiếu Nhập Kho</h3>
-              </div>
+      {/* MODAL 5: DELETE CONFIRMATION STOCK IMPORT */}
+      {receiptToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5 border border-slate-200 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-base text-slate-900">Xóa Đợt Nhập Hàng Này?</h4>
+              <p className="text-xs text-slate-500 mt-1">
+                Bạn có chắc muốn xóa đợt nhập <strong className="text-slate-800">{receiptToDelete.receiptNumber}</strong> từ <strong className="text-slate-800">{receiptToDelete.supplier}</strong> (trị giá {formatCurrency(receiptToDelete.totalAmount)}) không?
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setReceiptToDelete(null)}
-                className="text-white/80 hover:text-white cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
               >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 space-y-3 text-xs text-slate-600">
-              <p>Bạn có chắc chắn muốn xóa phiếu nhập kho này?</p>
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Mã phiếu:</span>
-                  <span className="font-mono font-bold text-rose-700">{receiptToDelete.receiptNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Ngày nhập:</span>
-                  <span className="font-bold text-slate-900">{formatDateVN(receiptToDelete.date)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Nhà cung cấp:</span>
-                  <span className="font-bold text-slate-900">{receiptToDelete.supplier}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Tổng tiền nhập:</span>
-                  <span className="font-mono font-bold text-rose-700">{formatCurrency(receiptToDelete.totalAmount)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setReceiptToDelete(null)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer transition"
-              >
-                Hủy bỏ
+                Hủy Bỏ
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  onDeleteStockImport(receiptToDelete.id);
+                  if (onDeleteStockImport) onDeleteStockImport(receiptToDelete.id);
                   setReceiptToDelete(null);
                 }}
-                className="px-4 py-1.5 text-xs font-black bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-md cursor-pointer transition"
+                className="px-4 py-2 text-xs font-black text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-md cursor-pointer"
               >
-                Đồng Ý Xóa
+                Xóa Phiếu Nhập
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* CONFIRMATION MODAL: CLEAR ALL INVENTORY DATA */}
+      {/* MODAL 6: CLEAR INVENTORY / RESET OPTIONS */}
       {isClearInventoryModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-rose-400" />
-                <h3 className="font-bold text-sm">Quản Lý & Xóa Dữ Liệu Kho Nhập</h3>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-5 sm:p-6 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h3 className="font-black text-base text-rose-700 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" />
+                <span>Quản Lý & Đặt Lại Dữ Liệu Kho</span>
+              </h3>
               <button
                 type="button"
                 onClick={() => setIsClearInventoryModalOpen(false)}
-                className="text-white/80 hover:text-white cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 p-1"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-slate-600">
-                Lựa chọn hành động xóa hoặc đặt lại dữ liệu kho vật tư để bắt đầu quản lý kho thực tế cho Tiệm In 194:
-              </p>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Hãy chọn thao tác bạn muốn thực hiện. Các thao tác này sẽ cập nhật trực tiếp lên Cloud Firestore:
+            </p>
 
-              {/* Action 1: Xóa sạch toàn bộ kho (0 vật tư & 0 phiếu nhập) */}
-              <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-1.5 text-rose-700">
-                    <AlertTriangle className="w-4 h-4 text-rose-600" />
-                    <h4 className="font-bold text-sm text-slate-900">Xóa sạch toàn bộ kho (0 vật liệu)</h4>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Xóa tất cả các loại vật tư và toàn bộ lịch sử phiếu nhập hàng. Kho sẽ hoàn toàn trống để bạn tự tạo danh mục từ đầu.
-                  </p>
-                </div>
+            <div className="space-y-2.5">
+              {onResetStockToZero && (
                 <button
                   type="button"
                   onClick={() => {
-                    if (onClearAllInventory) {
-                      onClearAllInventory();
-                    }
-                    setIsClearInventoryModalOpen(false);
-                  }}
-                  className="shrink-0 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Xóa sạch kho
-                </button>
-              </div>
-
-              {/* Action 2: Đặt lại số lượng tồn kho về 0 (Giữ nguyên danh mục) */}
-              <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-1.5 text-amber-800">
-                    <Boxes className="w-4 h-4 text-amber-600" />
-                    <h4 className="font-bold text-sm text-slate-900">Đặt lại số lượng tồn kho về 0</h4>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Giữ nguyên tên và mã các loại vật tư (Gỗ, Giấy, Mica, Khung...), nhưng đưa tất cả số lượng tồn kho về 0 và xóa lịch sử nhập cũ.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onResetStockToZero) {
+                    if (window.confirm('Bạn có chắc muốn đưa tất cả số lượng tồn kho về 0?')) {
                       onResetStockToZero();
+                      setIsClearInventoryModalOpen(false);
                     }
-                    setIsClearInventoryModalOpen(false);
                   }}
-                  className="shrink-0 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                  className="w-full text-left p-3 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 transition cursor-pointer"
                 >
-                  <RefreshCw className="w-4 h-4" />
-                  Đặt tồn về 0
+                  <p className="font-bold text-xs text-amber-900">1. Đưa số lượng tồn kho của tất cả vật liệu về 0</p>
+                  <p className="text-[11px] text-amber-700 mt-0.5">Giữ nguyên danh sách các loại vật liệu, chỉ xóa số lượng tồn.</p>
                 </button>
-              </div>
+              )}
 
-              {/* Action 3: Xóa sạch lịch sử phiếu nhập kho */}
-              <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 hover:bg-purple-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-1.5 text-purple-800">
-                    <FileText className="w-4 h-4 text-purple-600" />
-                    <h4 className="font-bold text-sm text-slate-900">Xóa toàn bộ lịch sử phiếu nhập kho</h4>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Xóa sạch toàn bộ các đợt nhập hàng ({stockImports.length} phiếu) và đưa chi phí vốn nhập kho về 0, nhưng giữ nguyên danh mục vật tư bạn đã tạo.
-                  </p>
-                </div>
+              {onReloadDefaultMaterials && (
                 <button
                   type="button"
                   onClick={() => {
-                    if (onClearAllStockImports) {
-                      onClearAllStockImports();
-                    }
-                    setIsClearInventoryModalOpen(false);
-                  }}
-                  className="shrink-0 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Xóa phiếu nhập
-                </button>
-              </div>
-
-              {/* Action 4: Nạp lại danh mục kho mẫu ban đầu */}
-              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 hover:bg-blue-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-1.5 text-blue-800">
-                    <RefreshCw className="w-4 h-4 text-blue-600" />
-                    <h4 className="font-bold text-sm text-slate-900">Nạp lại dữ liệu kho mẫu ban đầu</h4>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Khôi phục lại danh mục 11 vật tư và 5 phiếu nhập kho mẫu ban đầu của tiệm in 194.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onReloadDefaultMaterials) {
+                    if (window.confirm('Nạp lại danh mục vật liệu mặc định chuẩn của Tiệm In 194?')) {
                       onReloadDefaultMaterials();
+                      setIsClearInventoryModalOpen(false);
                     }
-                    setIsClearInventoryModalOpen(false);
                   }}
-                  className="shrink-0 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                  className="w-full text-left p-3 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 transition cursor-pointer"
                 >
-                  <RefreshCw className="w-4 h-4" />
-                  Nạp kho mẫu
+                  <p className="font-bold text-xs text-blue-900">2. Nạp lại danh mục vật liệu mặc định Tiệm In 194</p>
+                  <p className="text-[11px] text-blue-700 mt-0.5">Tải lại danh sách chuẩn: Gỗ MDF, Fomex, Mica, Mực in...</p>
                 </button>
-              </div>
+              )}
+
+              {onClearAllInventory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('CẢNH BÁO: Xóa sạch toàn bộ danh mục vật liệu và lịch sử nhập kho?')) {
+                      onClearAllInventory();
+                      setIsClearInventoryModalOpen(false);
+                    }
+                  }}
+                  className="w-full text-left p-3 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 transition cursor-pointer"
+                >
+                  <p className="font-bold text-xs text-rose-900">3. Xóa sạch hoàn toàn dữ liệu kho (Trắng dữ liệu)</p>
+                  <p className="text-[11px] text-rose-700 mt-0.5">Xóa trắng toàn bộ vật tư để bạn tự tạo từ đầu.</p>
+                </button>
+              )}
             </div>
 
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+            <div className="pt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => setIsClearInventoryModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer transition"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
               >
                 Đóng
               </button>
@@ -1743,74 +1953,20 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         </div>
       )}
 
-      {/* CONFIRMATION MODAL: CLEAR ALL STOCK IMPORT RECEIPTS */}
-      {isClearStockImportsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="p-4 bg-rose-600 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-white" />
-                <h3 className="font-bold text-sm">Xóa Hết Lịch Sử Phiếu Nhập Kho</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsClearStockImportsModalOpen(false)}
-                className="text-white/80 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 space-y-3 text-xs text-slate-600">
-              <p>Bạn có chắc chắn muốn xóa toàn bộ <strong>{stockImports.length}</strong> phiếu nhập kho hiện tại?</p>
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-slate-700">
-                <p>• Chi phí vốn nhập hàng trong báo cáo Thống Kê sẽ trở về <strong>0đ</strong>.</p>
-                <p>• Danh mục các loại vật tư (Gỗ, Giấy, Mica...) vẫn được giữ nguyên.</p>
-                <p>• Thao tác này không thể hoàn tác.</p>
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsClearStockImportsModalOpen(false)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer transition"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (onClearAllStockImports) {
-                    onClearAllStockImports();
-                  }
-                  setIsClearStockImportsModalOpen(false);
-                }}
-                className="px-4 py-1.5 text-xs font-black bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-md cursor-pointer transition"
-              >
-                Đồng Ý Xóa Hết Phiếu Nhập
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: BOM GUIDE - CÔNG THỨC BÓC TÁCH VẬT TƯ CẤU THÀNH TẤM ẢNH */}
+      {/* MODAL 7: BOM GUIDE (Công thức cấu thành) */}
       {isBOMGuideOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-5 sm:p-6 border border-slate-200 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-5 sm:p-6 border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
               <div className="flex items-center gap-2">
-                <span className="p-2 bg-amber-500/10 text-amber-700 rounded-xl">
-                  <Boxes className="w-5 h-5" />
-                </span>
+                <div className="p-2 bg-amber-500 rounded-xl text-slate-950">
+                  <BookOpen className="w-5 h-5" />
+                </div>
                 <div>
                   <h3 className="font-black text-base text-slate-900">
-                    Quy Chuẩn Định Mức Cốt Ảnh (BOM): Ván MDF & Fomex Siêu Nhẹ
+                    Quy Chuẩn Xuất Ván & Cốt Vật Tư Tiệm In 194
                   </h3>
-                  <p className="text-xs text-slate-500">
-                    Hệ thống tinh giản chỉ thống kê 2 loại cốt để xuất kho và tính giá chính xác nhất
-                  </p>
+                  <p className="text-xs text-slate-500">Quy tắc tự động bóc tách ván gỗ MDF và ván Fomex siêu nhẹ</p>
                 </div>
               </div>
               <button
@@ -1823,28 +1979,18 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             </div>
 
             <div className="space-y-4 overflow-y-auto flex-1 pr-1 text-xs">
-              {/* Nguyên tắc phân bổ định mức */}
-              <div className="p-4 bg-gradient-to-r from-amber-500/10 via-amber-100/50 to-transparent border border-amber-300 rounded-xl space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-black text-sm text-amber-950 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-600" />
-                    <span>Nguyên Tắc Bóc Tách Cốt Ảnh Tiệm In 194</span>
-                  </h4>
-                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900">
-                    Đã tinh giản
-                  </span>
-                </div>
-                <p className="text-slate-700 leading-relaxed">
-                  Để tránh rắc rối khi tính giá thành và kiểm kê kho, hệ thống đã <strong>bỏ qua các phụ liệu vụn vặt</strong> (mika, keo AB, màng lụa, mực in, giấy in...). Mỗi bức ảnh khi lên đơn sẽ <strong>chỉ bóc tách và khấu trừ duy nhất 1 tấm cốt nền tương ứng</strong>:
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="p-4 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-slate-50 border border-amber-300 rounded-xl space-y-2">
+                <h4 className="font-bold text-amber-950 uppercase tracking-wider text-xs">
+                  2 Dòng Cốt Vật Tư Chính Khi Bán Hàng:
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="p-3 bg-white rounded-xl border-2 border-blue-400/80 shadow-xs space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="font-black text-blue-900 text-xs flex items-center gap-1">
-                        <span>🪶</span> FOMEX SIÊU NHẸ (9LI)
+                      <span className="font-black text-blue-950 text-xs flex items-center gap-1">
+                        <span>🛡️</span> VÁN FOMEX 9LI
                       </span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">
-                        Chỉ 2 Dòng Sản Phẩm
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900">
+                        Ảnh 4K & HD Pro
                       </span>
                     </div>
                     <p className="text-slate-800 font-semibold text-[11px]">
@@ -1954,7 +2100,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   Đồng bộ tức thì với Phiếu Xuất Ván & Kho Vật Tư:
                 </p>
                 <p className="text-[11px] leading-relaxed">
-                  Tại màn hình <strong>Bán Hàng</strong>, cửa sổ <strong>Phiếu xuất ván MDF & Fomex</strong> sẽ tự động nhận diện ảnh 4K/HD Pro (dùng Fomex 9li) hay ảnh HD Gương/Lụa viền/Mika (dùng Gỗ MDF) để bóc tách ván tương ứng. Bạn cũng có thể chọn thủ công loại ván khác bất kỳ lúc nào. Khi bấm <strong>Lưu Đơn Hàng</strong>, kho sẽ tự động trừ ngay mà không cần tính toán thủ công!
+                  Tại màn hình <strong>Bán Hàng</strong>, cửa sổ <strong>Phiếu xuất ván MDF & Fomex</strong> sẽ tự động nhận diện ảnh 4K/HD Pro (dùng Fomex 9li) hay ảnh HD Gương/Lụa viền/Mika (dùng Gỗ MDF) để bóc tách ván tương ứng. Khi bấm <strong>Lưu Đơn Hàng</strong>, kho sẽ tự động trừ ngay mà không cần tính toán thủ công!
                 </p>
               </div>
             </div>
