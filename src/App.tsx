@@ -21,6 +21,8 @@ import {
   subscribeWorkshopInfo, saveWorkshopInfoToFirestore,
   initializeFirestoreIfEmpty, pushCurrentLocalDataToFirestore
 } from './services/firestoreService';
+import { subscribeAuthState, logoutUser } from './services/authService';
+import { User } from 'firebase/auth';
 import { Header, ActiveTab } from './components/Header';
 import { SalesInvoiceForm } from './components/SalesInvoiceForm';
 import { OrderList } from './components/OrderList';
@@ -31,6 +33,7 @@ import { InventoryManagementView } from './components/InventoryManagementView';
 import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DataManagementModal } from './components/DataManagementModal';
+import { LoginView } from './components/LoginView';
 import { DEFAULT_PRODUCTS } from './data/initialData';
 
 const STORAGE_TAB_KEY = 'xuongin194_active_tab';
@@ -57,6 +60,8 @@ const getInitialTab = (): ActiveTab => {
 };
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>(getInitialTab);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -76,6 +81,15 @@ export default function App() {
 
   // Trigger to reset POS form to a brand new clean order
   const [newOrderTrigger, setNewOrderTrigger] = useState<number>(0);
+
+  // 0. Listen to Firebase Authentication State
+  useEffect(() => {
+    const unsubscribeAuth = subscribeAuthState((user) => {
+      setCurrentUser(user);
+      setAuthLoading(false);
+    });
+    return () => unsubscribeAuth();
+  }, []);
 
   // Function to switch tab and immediately persist to storage
   const handleSelectTab = (tab: ActiveTab) => {
@@ -104,8 +118,19 @@ export default function App() {
     setNewOrderTrigger(Date.now());
   };
 
+  // Handler for user logout
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      setCurrentUser(null);
+    } catch (e) {
+      console.error('Error during logout:', e);
+    }
+  };
+
   // 1. Initial local load for instant UI render
   useEffect(() => {
+    if (!currentUser) return;
     setProducts(getStoredProducts());
     setCustomers(getStoredCustomers());
     setOrders(getStoredOrders());
@@ -113,10 +138,12 @@ export default function App() {
     setMaterials(getStoredMaterials());
     setStockImports(getStoredStockImports());
     setCombos(getStoredCombos());
-  }, []);
+  }, [currentUser]);
 
-  // 2. Real-time Firebase Cloud Firestore Synchronizer
+  // 2. Real-time Firebase Cloud Firestore Synchronizer (Active when logged in)
   useEffect(() => {
+    if (!currentUser) return;
+
     // Check & seed if Firestore is brand new/empty
     initializeFirestoreIfEmpty().then(() => {
       setFirestoreStatus('connected');
@@ -170,7 +197,7 @@ export default function App() {
       unsubStockImports();
       unsubCombos();
     };
-  }, []);
+  }, [currentUser]);
 
   // Reload all data manually (fallback)
   const loadAllData = () => {
@@ -564,6 +591,27 @@ export default function App() {
     saveWorkshopInfoToFirestore(info).catch(console.error);
   };
 
+  // 1. Loading splash screen while verifying persistent session
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-400 to-amber-300 text-slate-950 font-black text-2xl flex items-center justify-center shadow-xl shadow-amber-500/20 ring-4 ring-slate-800 animate-bounce mb-5">
+          194
+        </div>
+        <div className="flex items-center gap-3 text-slate-300 font-semibold text-sm bg-slate-900/90 border border-slate-800 px-5 py-2.5 rounded-2xl shadow-xl">
+          <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+          <span>Đang kiểm tra phiên đăng nhập...</span>
+        </div>
+        <p className="text-xs text-slate-500 mt-3">Tiệm In 194 • Hệ thống Quản lý Bán hàng</p>
+      </div>
+    );
+  }
+
+  // 2. Lock UI completely if user is not signed in
+  if (!currentUser) {
+    return <LoginView onLoginSuccess={() => {}} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans">
       {/* Navigation & Header */}
@@ -575,6 +623,9 @@ export default function App() {
         onOpenDataManagement={() => setIsDataManagementOpen(true)}
         ordersCount={orders.length}
         lowStockCount={lowStockCount}
+        firestoreStatus={firestoreStatus}
+        currentUserEmail={currentUser.email}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}

@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { WorkshopInfo } from '../types';
-import { ShoppingCart, FileText, BarChart3, Tag, Users, Settings, Database, Boxes, Cloud, CloudCheck, RefreshCw } from 'lucide-react';
+import {
+  ShoppingCart, FileText, BarChart3, Tag, Users, Settings, Database, Boxes,
+  Cloud, CloudCheck, RefreshCw, LogOut, UserCircle2, User
+} from 'lucide-react';
 
 export type ActiveTab = 'pos' | 'orders' | 'inventory' | 'analytics' | 'products' | 'customers';
 
@@ -13,6 +16,8 @@ interface HeaderProps {
   ordersCount: number;
   lowStockCount?: number;
   firestoreStatus?: 'connected' | 'syncing' | 'offline';
+  currentUserEmail?: string | null;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,8 +28,16 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDataManagement,
   ordersCount,
   lowStockCount = 0,
-  firestoreStatus = 'connected'
+  firestoreStatus = 'connected',
+  currentUserEmail,
+  onLogout
 }) => {
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const handleConfirmLogout = () => {
+    setShowLogoutConfirm(false);
+    if (onLogout) onLogout();
+  };
   return (
     <header className="bg-slate-900 text-white sticky top-0 z-40 shadow-lg border-b border-slate-800 no-print">
       <div className="w-full px-3 sm:px-5 lg:px-8">
@@ -146,8 +159,23 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </nav>
 
-          {/* Right Tools: Data Management + Settings */}
+          {/* Right Tools: User info + Data Management + Settings + Logout */}
           <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* User Account / Email Badge */}
+            {currentUserEmail && (
+              <div
+                className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl text-xs text-slate-300 max-w-[170px]"
+                title={`Tài khoản đang đăng nhập: ${currentUserEmail}`}
+              >
+                <div className="w-5 h-5 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0">
+                  {currentUserEmail.charAt(0).toUpperCase()}
+                </div>
+                <span className="truncate font-medium text-[11px] text-slate-200">
+                  {currentUserEmail.split('@')[0]}
+                </span>
+              </div>
+            )}
+
             {/* Clear / Seed Data Management Button */}
             <button
               onClick={onOpenDataManagement}
@@ -155,7 +183,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="Đồng bộ đám mây, sao lưu hoặc nạp dữ liệu"
             >
               <Database className="w-4 h-4 text-amber-400" />
-              <span className="hidden lg:inline text-[11px]">Đồng Bộ & Dữ Liệu</span>
+              <span className="hidden lg:inline text-[11px]">Đồng Bộ</span>
             </button>
 
             <button
@@ -165,9 +193,57 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Settings className="w-5 h-5" />
             </button>
+
+            {/* Logout Button */}
+            {onLogout && (
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 border border-rose-500/30 rounded-xl text-xs font-bold transition cursor-pointer shadow-2xs"
+                title="Đăng xuất khỏi tài khoản"
+              >
+                <LogOut className="w-4 h-4 text-rose-400" />
+                <span className="hidden sm:inline">Đăng xuất</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Logout Confirmation Modal Overlay */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-5 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto ring-4 ring-rose-500/20">
+              <LogOut className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-white">
+                Xác nhận Đăng xuất?
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Bạn có chắc chắn muốn đăng xuất tài khoản <strong className="text-amber-400 font-mono">{currentUserEmail || 'này'}</strong> không? Giao diện sẽ được khóa lại.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                className="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition cursor-pointer"
+              >
+                Đăng xuất ngay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

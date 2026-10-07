@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 // Cấu hình Firebase Web App của Tiệm In 194
 export const firebaseConfig = {
@@ -17,3 +18,6 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 
 // Khởi tạo Cloud Firestore Database
 export const db = getFirestore(app);
+
+// Khởi tạo Firebase Authentication
+export const auth = getAuth(app);
