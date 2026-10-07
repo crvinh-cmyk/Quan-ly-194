@@ -20,7 +20,8 @@ import {
   saveStoredSelectedPopularCodes,
   resetStoredSelectedPopularCodes,
   DEFAULT_POPULAR_BASE_CODES,
-  convertProductCodeForTier
+  convertProductCodeForTier,
+  getProductCoreType
 } from '../utils/productHelpers';
 
 interface SalesInvoiceFormProps {
@@ -568,50 +569,30 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
       isManual?: boolean;
     }[] = [];
 
-    // 1. Scan valid invoice rows and map to required board (Fomex for 4K/HD+, MDF for other photos)
+    // 1. Scan valid invoice rows and map to required board (Fomex for 4K/HD Pro, MDF for other photos, NONE for in/inep/album/khung)
     items.forEach((row, idx) => {
       if (excludedSourceRowIds.includes(row.id)) return;
       if (!row.quantity || row.quantity <= 0) return;
       if (!row.productCode && !row.productName && !row.size && row.price <= 0) return;
 
-      const effectiveSize = extractEffectiveSize(row.size, row.productName, row.productCode);
-      const normSize = normalizeSize(effectiveSize);
+      // Phân loại cốt vật tư:
+      // - 'none': In ảnh, In ép, Khung gia cố (NEP), Album mở phẳng, Photobook... -> BỎ TRỐNG CỐT, KHÔNG TRỪ VÁN
+      // - 'fomex': DUY NHẤT dành cho Ảnh 4K và Ảnh HD Pro -> Cốt Fomex 9li siêu nhẹ
+      // - 'mdf': Tất cả các dòng ảnh còn lại (HD Gương Siêu Bóng, Lụa Viền, Mika, Lụa Khung, Ép Gỗ, Tráng Gương, Pha Lê...) -> Cốt Ván Gỗ MDF
+      const coreType = getProductCoreType({
+        code: row.productCode,
+        name: row.productName,
+        note: row.note
+      });
 
-      const pName = (row.productName || '').toLowerCase().trim();
-      const pCode = (row.productCode || '').toLowerCase().trim();
-      const pNote = (row.note || '').toLowerCase().trim();
-      const fullText = `${pName} ${pCode} ${pNote}`;
-
-      // User lưu ý: In và In Ép không dùng cốt vật tư gỗ MDF / Fomex, bỏ trống không trừ ván!
-      const isNoCore =
-        pCode.startsWith('inst') ||
-        pCode.startsWith('infl') ||
-        pCode.startsWith('inkl') ||
-        pCode.startsWith('inepst') ||
-        pCode.startsWith('inepfl') ||
-        pCode.startsWith('inepkl') ||
-        pCode.startsWith('inep') ||
-        pCode === 'in' ||
-        pName.startsWith('in ảnh') ||
-        pName.startsWith('in ép') ||
-        pName === 'in';
-
-      if (isNoCore) {
+      if (coreType === 'none') {
         return;
       }
 
-      const is4K = fullText.includes('4k');
-      const isHDPlus =
-        fullText.includes('hd+') ||
-        fullText.includes('hd gương') ||
-        fullText.includes('hd plus') ||
-        fullText.includes('hd-plus') ||
-        fullText.includes('hd_plus') ||
-        fullText.includes('hd +') ||
-        pCode.startsWith('hd');
+      const effectiveSize = extractEffectiveSize(row.size, row.productName, row.productCode);
+      const normSize = normalizeSize(effectiveSize);
 
-      const isFomex = is4K || isHDPlus;
-      const targetCategory = isFomex ? 'Fomex siêu nhẹ' : 'Gỗ MDF';
+      const targetCategory = coreType === 'fomex' ? 'Fomex siêu nhẹ' : 'Gỗ MDF';
       const candidateMaterials = materials.filter(m => m.category === targetCategory);
 
       let selectedMat: Material | undefined;

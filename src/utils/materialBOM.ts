@@ -1,4 +1,5 @@
 import { OrderItem, Material, MaterialDeduction, Product, Order } from '../types';
+import { getProductCoreType } from './productHelpers';
 
 export interface BOMRequirement {
   materialId: string;
@@ -89,60 +90,25 @@ export function calculateItemBOM(
   }
 
   // 3. Quy chuẩn định mức tinh giản theo yêu cầu Tiệm In 194:
-  // - Bỏ hết các vật tư rắc rối (mika, keo AB, màng lụa, giấy in, khung...)
-  // - Chỉ thống kê 2 loại cốt ảnh:
-  //   + FOMEX SIÊU NHẸ 9LI: DÙNG DUY NHẤT CHO 2 DẠNG SẢN PHẨM: "ẢNH 4K" VÀ "ẢNH HD PRO"
-  //   + VÁN MDF: Dùng làm cốt cho tất cả các loại ảnh khác (kể cả Ảnh HD Gương Siêu Bóng, Lụa Viền, Mika Bo Viền, Ép Gỗ, Ảnh Cổng...)
-  const effectiveSize = extractEffectiveSize(item.size, item.productName, item.productCode);
-  const normItemSize = normalizeSize(effectiveSize);
-  const prodName = (item.productName || '').toLowerCase().trim();
-  const prodCode = (item.productCode || '').toLowerCase().trim();
-  const prodNote = (item.note || '').toLowerCase().trim();
-  const fullText = `${prodName} ${prodCode} ${prodNote}`;
+  // - Bỏ trống cốt (KHÔNG TRỪ VẬT TƯ CỐT): In ảnh, In ép, Khung gia cố (NEP), Album mở phẳng, Photobook, Tạp chí
+  // - CỐT FOMEX 9LI SIÊU NHẸ: DUY NHẤT dành cho "Ảnh 4K" và "Ảnh HD Pro"
+  // - CỐT VÁN GỖ MDF: Tất cả các dòng ảnh còn lại (HD Gương Siêu Bóng, Lụa Viền, Mika, Lụa Khung, Ép Gỗ, Tráng Gương, Pha Lê...)
+  const coreType = getProductCoreType({
+    code: item.productCode,
+    name: item.productName,
+    note: item.note
+  });
 
-  // Kiểm tra nếu là dòng sản phẩm "In", "In Ép", hoặc "Album mở phẳng":
-  // User lưu ý: "in và in ép không dùng cốt vật tư là gỗ mdf, có thể bỏ trống" và "album mở phẳng ... mục không cốt"
-  const isNoCore =
-    prodCode.startsWith('inst') ||
-    prodCode.startsWith('infl') ||
-    prodCode.startsWith('inkl') ||
-    prodCode.startsWith('inepst') ||
-    prodCode.startsWith('inepfl') ||
-    prodCode.startsWith('inepkl') ||
-    prodCode.startsWith('inep') ||
-    prodCode.startsWith('nep') ||
-    prodCode.startsWith('abmp') ||
-    prodCode.startsWith('fl-abmp') ||
-    prodCode.startsWith('kl-abmp') ||
-    prodCode.startsWith('ab') ||
-    prodCode === 'in' ||
-    prodName.startsWith('in ảnh') ||
-    prodName.startsWith('in ép') ||
-    prodName.includes('gia cố') ||
-    prodName.includes('nẹp') ||
-    prodName.includes('album') ||
-    prodName.includes('photobook') ||
-    prodName.includes('mở phẳng') ||
-    prodName === 'in';
-
-  if (isNoCore) {
-    // Không dùng cốt gỗ MDF / Fomex -> bỏ trống
+  // Nếu là sản phẩm bỏ trống cốt -> Không trừ cốt ván MDF / Fomex
+  if (coreType === 'none') {
     return [];
   }
 
-  // CHỈ CÓ 2 DẠNG DÙNG FOMEX SIÊU NHẸ 9LI: ẢNH 4K VÀ ẢNH HD PRO
-  // Ảnh "HD Gương Siêu Bóng" (HDST, HDFL, HDKL...) dùng cốt GỖ MDF!
-  const is4K = fullText.includes('4k');
-  const isHDPro =
-    fullText.includes('hd pro') ||
-    fullText.includes('hd-pro') ||
-    fullText.includes('hd_pro') ||
-    fullText.includes('hdpro');
-
-  const isFomex = is4K || isHDPro;
+  const effectiveSize = extractEffectiveSize(item.size, item.productName, item.productCode);
+  const normItemSize = normalizeSize(effectiveSize);
   const result: { material: Material; quantity: number; reason: string }[] = [];
 
-  if (isFomex) {
+  if (coreType === 'fomex') {
     // 1. TẤM FOMEX SIÊU NHẸ 9LI (Chỉ dùng cho ảnh 4K và ảnh HD Pro)
     const fomexMat = materials.find(m => {
       if (m.category !== 'Fomex siêu nhẹ') return false;
@@ -158,11 +124,11 @@ export function calculateItemBOM(
       result.push({
         material: fomexMat,
         quantity: item.quantity * 1,
-        reason: `${item.quantity} tấm Fomex siêu nhẹ 9li cho ${is4K ? 'Ảnh 4K' : 'Ảnh HD Pro'} (${effectiveSize || 'tiêu chuẩn'})`
+        reason: `${item.quantity} tấm Fomex siêu nhẹ 9li cho ${item.productName || item.productCode} (${effectiveSize || 'tiêu chuẩn'})`
       });
     }
   } else {
-    // 2. TẤM VÁN MDF (Cho tất cả các loại ảnh khác: HD gương siêu bóng, lụa viền, mika bo viền, ép gỗ, ảnh cổng cưới, để bàn...)
+    // 2. TẤM VÁN MDF (Cho tất cả các loại ảnh khác: HD gương siêu bóng, lụa viền, mika bo viền, lụa khung, ép gỗ, ảnh cổng cưới, để bàn...)
     const woodMat = materials.find(m => {
       if (m.category !== 'Gỗ MDF') return false;
       const normMatCode = normalizeSize(m.code);

@@ -4,28 +4,73 @@ export type ProductCoreType = 'mdf' | 'fomex' | 'none';
 
 /**
  * Phân loại cốt vật tư chuẩn theo yêu cầu Tiệm In 194:
- * 1. Bỏ trống cốt (Không dùng cốt): In, In Ép Mika, Khung Gia Cố (NEP), Album mở phẳng
+ * 1. Bỏ trống cốt (Không dùng cốt): In ảnh kỹ thuật số, In Ép (inep), Khung Gia Cố nẹp (NEP), Album mở phẳng / Photobook / Tạp chí
  * 2. Cốt Fomex 9li siêu nhẹ: DUY NHẤT dành cho "Ảnh 4K" và "Ảnh HD Pro"
- * 3. Cốt Gỗ MDF: HD Gương Siêu Bóng (bo viền / khung), Lụa Viền (LV), Lụa Khung (LK), Mika (MK), Khung ảnh...
+ * 3. Cốt Gỗ MDF: Tất cả các loại ảnh khác (Ảnh HD Gương Siêu Bóng bo viền / khung, Lụa Viền LV, Lụa Khung LK, Mika MK, Ép Gỗ EG, Tráng Gương TG, Pha Lê PL...)
  */
-export function getProductCoreType(prod: { code: string; name: string }): ProductCoreType {
+export function getProductCoreType(prod: {
+  code?: string;
+  name?: string;
+  note?: string;
+  description?: string;
+  recipe?: any[];
+}): ProductCoreType {
   const code = (prod.code || '').toLowerCase().trim();
   const name = (prod.name || '').toLowerCase().trim();
+  const note = (prod.note || '').toLowerCase().trim();
+  const desc = (prod.description || '').toLowerCase().trim();
+  const fullText = `${code} ${name} ${note} ${desc}`;
+
+  // 0. Nếu sản phẩm có công thức định mức (recipe) riêng
+  if (prod.recipe && prod.recipe.length > 0) {
+    const hasFomex = prod.recipe.some((r: any) =>
+      (r.materialCode && r.materialCode.toLowerCase().includes('fomex')) ||
+      (r.materialName && r.materialName.toLowerCase().includes('fomex'))
+    );
+    if (hasFomex) return 'fomex';
+
+    const hasMdf = prod.recipe.some((r: any) =>
+      (r.materialCode && (r.materialCode.toLowerCase().includes('mdf') || r.materialCode.toLowerCase().includes('go'))) ||
+      (r.materialName && (r.materialName.toLowerCase().includes('mdf') || r.materialName.toLowerCase().includes('gỗ')))
+    );
+    if (hasMdf) return 'mdf';
+
+    return 'none';
+  }
 
   // 1. Không dùng cốt (Bỏ trống cốt)
-  const isKhungGiaCo = code.startsWith('nep') || name.includes('gia cố') || name.includes('nẹp');
+  // - Khung gia cố nẹp (NEPST1/2/3, NEPFL, NEPKL, nẹp...)
+  // - Album mở phẳng, Photobook, Tạp chí (ABMP, AB, FL-ABMP, KL-ABMP...)
+  // - In ảnh kỹ thuật số (inST, INFL, INKL, in...)
+  // - In ảnh ép lụa / ép bóng (inepST, inepFL, inepKL, inep...)
+  const isKhungGiaCo =
+    code.startsWith('nep') ||
+    name.includes('gia cố') ||
+    name.includes('nẹp') ||
+    fullText.includes('gia cố') ||
+    fullText.includes('khung nẹp');
+
   const isAlbumOrPhotobook =
     code.startsWith('ab') ||
     code.startsWith('fl-ab') ||
     code.startsWith('kl-ab') ||
     name.includes('album') ||
     name.includes('photobook') ||
+    name.includes('tạp chí') ||
     name.includes('mở phẳng');
+
   const isPrintOrPress =
-    code.startsWith('in') ||
+    code.startsWith('inst') ||
+    code.startsWith('infl') ||
+    code.startsWith('inkl') ||
+    code.startsWith('inepst') ||
+    code.startsWith('inepfl') ||
+    code.startsWith('inepkl') ||
+    code.startsWith('inep') ||
+    code === 'in' ||
     name.startsWith('in ảnh') ||
     name.startsWith('in ép') ||
-    (code.startsWith('in') && !code.startsWith('hd') && !code.startsWith('mk') && !code.startsWith('lv') && !code.startsWith('lk'));
+    name === 'in';
 
   if (isPrintOrPress || isAlbumOrPhotobook || isKhungGiaCo) {
     if (!code.startsWith('hd') && !code.startsWith('mk') && !code.startsWith('lv') && !code.startsWith('lk')) {
@@ -33,21 +78,33 @@ export function getProductCoreType(prod: { code: string; name: string }): Produc
     }
   }
 
-  // 2. Fomex 9li: CHỈ DÀNH RIÊNG CHO "ẢNH 4K" VÀ "ẢNH HD PRO"
-  const is4K = code.includes('4k') || name.includes('4k');
+  if (fullText.includes('không cốt') || fullText.includes('bỏ trống cốt') || fullText.includes('ko cốt')) {
+    return 'none';
+  }
+
+  // 2. Cốt Fomex 9li: DUY NHẤT DÀNH CHO "ẢNH 4K" VÀ "ẢNH HD PRO"
+  // (Lưu ý: "HD Gương Siêu Bóng" HDST... dùng cốt GỖ MDF, KHÔNG PHẢI Fomex!)
+  const is4K = code.includes('4k') || name.includes('4k') || note.includes('4k') || desc.includes('4k');
   const isHDPro =
     code.includes('hdpro') ||
     code.includes('hd-pro') ||
     code.includes('hd_pro') ||
     name.includes('hd pro') ||
     name.includes('hd-pro') ||
-    name.includes('hdpro');
+    name.includes('hdpro') ||
+    note.includes('hd pro') ||
+    note.includes('hdpro');
 
   if (is4K || isHDPro) {
     return 'fomex';
   }
 
-  // 3. Ván Gỗ MDF: HD Gương Siêu Bóng, Lụa Viền, Mika, Lụa Khung...
+  // 3. Cốt Ván GỖ MDF: Tất cả các dòng ảnh còn lại:
+  // - HD Gương Siêu Bóng (HDST, HDFL, HDKL, HD Gương Khung...)
+  // - Lụa Viền Bo Viền (LVST, LVFL, LVKL)
+  // - Lụa Khung (LKST, LKFL, LKKL)
+  // - Mika Phổ Thông Bo Viền / Khung (MKST, MKFL, MKKL)
+  // - Ảnh Ép Gỗ (EG), Ảnh Tráng Gương (TG), Ảnh Pha Lê (PL)...
   return 'mdf';
 }
 
