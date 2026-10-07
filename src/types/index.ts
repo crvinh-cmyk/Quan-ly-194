@@ -150,3 +150,24 @@ export interface StockImportReceipt {
   createdAt: string;
 }
 
+export interface ComboItem {
+  id: string;
+  productCode: string;
+  productName: string;
+  size: string;
+  quantity: number;
+  note?: string;
+  defaultPrice?: number;
+}
+
+export interface StudioCombo {
+  id: string;
+  name: string; // Tên combo ví dụ: "Combo Thu Hằng Studio - Cưới VIP"
+  studioName?: string; // Tên Studio gán (ví dụ: "Thu Hằng Studio", "Studio Hoàng Gia", hoặc "Dùng chung")
+  customerId?: string; // ID khách hàng nếu gắn với khách cụ thể
+  description?: string;
+  items: ComboItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+

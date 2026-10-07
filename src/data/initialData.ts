@@ -1,4 +1,4 @@
-import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt } from '../types';
+import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from '../types';
 import { cloneStudioProductToFreelance } from '../utils/productHelpers';
 
 export const DEFAULT_WORKSHOP_INFO: WorkshopInfo = {
@@ -241,6 +241,18 @@ function generateStandardProducts(): Product[] {
 export const DEFAULT_PRODUCTS: Product[] = generateStandardProducts();
 
 export const DEFAULT_CUSTOMERS: Customer[] = [
+  {
+    id: 'c-thuhang',
+    name: 'Thu Hằng Studio',
+    phone: '0988 776 554',
+    studioName: 'Thu Hằng Studio',
+    address: '156 Phố Huế, Hai Bà Trưng, Hà Nội',
+    initialDebt: 0,
+    customerType: 'GIÁ STUDIO',
+    notes: 'Studio quen in ảnh cưới VIP, hay đặt Combo ảnh cổng HD + 2 bàn HD + Album',
+    createdAt: '2026-01-08',
+    initialYearlyRevenue: 28000000
+  },
   {
     id: 'c1',
     name: 'Studio Áo Cưới Hoàng Gia',
@@ -754,4 +766,120 @@ export const DEFAULT_STOCK_IMPORTS: StockImportReceipt[] = [
     createdAt: '2026-08-12T16:00:00Z'
   }
 ];
+
+export const DEFAULT_COMBOS: StudioCombo[] = [
+  {
+    id: 'combo-thuhang-01',
+    name: 'Combo Thu Hằng Studio (Ảnh Cổng VIP + 2 Bàn + Album)',
+    studioName: 'Thu Hằng Studio',
+    description: 'Bộ sản phẩm cưới quen thuộc nhất của Thu Hằng Studio: 1 ảnh cổng HD 60x90, 2 ảnh bàn HD 20x30, 1 Album mở phẳng 20x30',
+    items: [
+      {
+        id: 'ci-1',
+        productCode: 'HDST60*90',
+        productName: 'Ảnh HD Gương Siêu Bóng Bo Viền',
+        size: '60*90',
+        quantity: 1,
+        note: 'Bo viền vàng ánh kim (Ảnh Cổng Cưới VIP)'
+      },
+      {
+        id: 'ci-2',
+        productCode: 'HDST20*30',
+        productName: 'Ảnh HD Gương Siêu Bóng Bo Viền',
+        size: '20*30',
+        quantity: 2,
+        note: 'Để bàn trang trí gallery'
+      },
+      {
+        id: 'ci-3',
+        productCode: 'ABMP20x30',
+        productName: 'Album Mở Phẳng 20x30 10 Tờ',
+        size: '20x30',
+        quantity: 1,
+        note: 'In sắc nét cao cấp'
+      }
+    ],
+    createdAt: '2026-01-10T08:00:00Z',
+    updatedAt: '2026-01-10T08:00:00Z'
+  },
+  {
+    id: 'combo-hoanggia-01',
+    name: 'Combo Studio Hoàng Gia (Tráng Gương Pha Lê + Bàn)',
+    studioName: 'Studio Áo Cưới Hoàng Gia',
+    description: '1 Ảnh Cổng Tráng Gương Pha Lê 60x90 bo viền sang trọng, 2 Ảnh Ép Lụa 15x21 để bàn',
+    items: [
+      {
+        id: 'ci-4',
+        productCode: 'TG6090',
+        productName: 'Ảnh Cổng Cưới Tráng Gương Pha Lê Bo Viền',
+        size: '60x90',
+        quantity: 1,
+        note: 'Viền vàng champagne'
+      },
+      {
+        id: 'ci-5',
+        productCode: 'LVST15*21',
+        productName: 'Ảnh Lụa Viền Bo Viền',
+        size: '15*21',
+        quantity: 2,
+        note: 'Ảnh bàn cưới'
+      }
+    ],
+    createdAt: '2026-01-15T08:00:00Z',
+    updatedAt: '2026-01-15T08:00:00Z'
+  },
+  {
+    id: 'combo-wedding-std',
+    name: 'Combo Cưới Tiêu Chuẩn (Cổng Gỗ 60x90 + 2 Bàn 13x18)',
+    studioName: 'Dùng chung',
+    description: 'Combo gói tiệc cưới phổ thông giá xưởng tốt nhất: 1 ảnh ép gỗ 60x90 bo viền và 2 ảnh bàn 13x18',
+    items: [
+      {
+        id: 'ci-6',
+        productCode: 'EG6090',
+        productName: 'Ảnh Cổng Ép Gỗ Láng Bo Viền',
+        size: '60x90',
+        quantity: 1,
+        note: 'Ảnh cổng tiệc cưới'
+      },
+      {
+        id: 'ci-7',
+        productCode: 'inepST13*18',
+        productName: 'In Ảnh Kỹ Thuật Số Ép Lụa/Bóng',
+        size: '13*18',
+        quantity: 2,
+        note: 'Kèm chân để bàn'
+      }
+    ],
+    createdAt: '2026-02-01T08:00:00Z',
+    updatedAt: '2026-02-01T08:00:00Z'
+  },
+  {
+    id: 'combo-mika-01',
+    name: 'Combo Mika Gương Bóng (Cổng 60x90 + 2 Bàn 20x30)',
+    studioName: 'Dùng chung',
+    description: '1 Ảnh Cổng Mika Phổ Thông Bo Viền 60x90, 2 Ảnh Mika 20x30 để bàn gallery',
+    items: [
+      {
+        id: 'ci-8',
+        productCode: 'MKST60*90',
+        productName: 'Ảnh Mika Phổ Thông Bo Viền',
+        size: '60*90',
+        quantity: 1,
+        note: 'Cổng mika sáng bóng'
+      },
+      {
+        id: 'ci-9',
+        productCode: 'MKST20*30',
+        productName: 'Ảnh Mika Phổ Thông Bo Viền',
+        size: '20*30',
+        quantity: 2,
+        note: 'Ảnh bàn'
+      }
+    ],
+    createdAt: '2026-02-10T08:00:00Z',
+    updatedAt: '2026-02-10T08:00:00Z'
+  }
+];
+
 

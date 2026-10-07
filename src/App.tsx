@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Product, Customer, Order, OrderStatus, WorkshopInfo, Material, StockImportReceipt } from './types';
+import { Product, Customer, Order, OrderStatus, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from './types';
 import {
   getStoredProducts, saveStoredProducts,
   getStoredCustomers, saveStoredCustomers,
@@ -7,6 +7,7 @@ import {
   getStoredWorkshopInfo, saveStoredWorkshopInfo,
   getStoredMaterials, saveStoredMaterials,
   getStoredStockImports, saveStoredStockImports,
+  getStoredCombos, saveStoredCombos,
   clearAllInventoryData, resetInventoryStockToZero, reloadDefaultMaterials, clearAllStockImportsOnly,
   calculateCustomerDebt
 } from './utils/storage';
@@ -16,6 +17,7 @@ import {
   subscribeOrders, saveOrderToFirestore, deleteOrderFromFirestore, syncAllOrdersToFirestore,
   subscribeMaterials, saveMaterialToFirestore, deleteMaterialFromFirestore, syncAllMaterialsToFirestore,
   subscribeStockImports, saveStockImportToFirestore, deleteStockImportFromFirestore, syncAllStockImportsToFirestore,
+  subscribeCombos, saveComboToFirestore, deleteComboFromFirestore, syncAllCombosToFirestore,
   subscribeWorkshopInfo, saveWorkshopInfoToFirestore,
   initializeFirestoreIfEmpty, pushCurrentLocalDataToFirestore
 } from './services/firestoreService';
@@ -61,6 +63,7 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [stockImports, setStockImports] = useState<StockImportReceipt[]>([]);
+  const [combos, setCombos] = useState<StudioCombo[]>([]);
   const [workshop, setWorkshop] = useState<WorkshopInfo>(getStoredWorkshopInfo());
   const [firestoreStatus, setFirestoreStatus] = useState<'connected' | 'syncing' | 'offline'>('syncing');
 
@@ -109,6 +112,7 @@ export default function App() {
     setWorkshop(getStoredWorkshopInfo());
     setMaterials(getStoredMaterials());
     setStockImports(getStoredStockImports());
+    setCombos(getStoredCombos());
   }, []);
 
   // 2. Real-time Firebase Cloud Firestore Synchronizer
@@ -152,6 +156,11 @@ export default function App() {
       setFirestoreStatus('connected');
     });
 
+    const unsubCombos = subscribeCombos((data) => {
+      setCombos(data);
+      setFirestoreStatus('connected');
+    });
+
     return () => {
       unsubWorkshop();
       unsubProducts();
@@ -159,6 +168,7 @@ export default function App() {
       unsubOrders();
       unsubMaterials();
       unsubStockImports();
+      unsubCombos();
     };
   }, []);
 
@@ -170,6 +180,25 @@ export default function App() {
     setWorkshop(getStoredWorkshopInfo());
     setMaterials(getStoredMaterials());
     setStockImports(getStoredStockImports());
+    setCombos(getStoredCombos());
+  };
+
+  // Combo CRUD handlers
+  const handleSaveCombo = (combo: StudioCombo) => {
+    const exists = combos.some(c => c.id === combo.id);
+    const updated = exists
+      ? combos.map(c => (c.id === combo.id ? combo : c))
+      : [combo, ...combos];
+    setCombos(updated);
+    saveStoredCombos(updated);
+    saveComboToFirestore(combo).catch(console.error);
+  };
+
+  const handleDeleteCombo = (comboId: string) => {
+    const updated = combos.filter(c => c.id !== comboId);
+    setCombos(updated);
+    saveStoredCombos(updated);
+    deleteComboFromFirestore(comboId).catch(console.error);
   };
 
   // Material CRUD handlers (Firestore + Local fallback)
@@ -620,6 +649,9 @@ export default function App() {
             customers={customers}
             allOrders={orders}
             materials={materials}
+            combos={combos}
+            onSaveCombo={handleSaveCombo}
+            onDeleteCombo={handleDeleteCombo}
             onSaveOrder={handleSaveOrder}
             onAddNewCustomer={handleAddCustomer}
             onAddNewProduct={handleAddProduct}

@@ -1,11 +1,12 @@
-import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt } from '../types';
+import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from '../types';
 import {
   DEFAULT_PRODUCTS,
   DEFAULT_CUSTOMERS,
   DEFAULT_ORDERS,
   DEFAULT_WORKSHOP_INFO,
   DEFAULT_MATERIALS,
-  DEFAULT_STOCK_IMPORTS
+  DEFAULT_STOCK_IMPORTS,
+  DEFAULT_COMBOS
 } from '../data/initialData';
 
 const STORAGE_KEYS = {
@@ -14,7 +15,8 @@ const STORAGE_KEYS = {
   ORDERS: 'xuongin194_orders',
   WORKSHOP: 'xuongin194_workshop_info',
   MATERIALS: 'xuongin194_materials',
-  STOCK_IMPORTS: 'xuongin194_stock_imports'
+  STOCK_IMPORTS: 'xuongin194_stock_imports',
+  COMBOS: 'xuongin194_combos'
 };
 
 /**
@@ -318,6 +320,25 @@ export function calculateCustomerDebt(customerId: string, allOrders: Order[], al
   return customer.initialDebt || 0;
 }
 
+export function getStoredCombos(): StudioCombo[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.COMBOS);
+    if (!raw) {
+      localStorage.setItem(STORAGE_KEYS.COMBOS, JSON.stringify(DEFAULT_COMBOS));
+      return DEFAULT_COMBOS;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : DEFAULT_COMBOS;
+  } catch (e) {
+    console.error('Error loading combos from localStorage', e);
+    return DEFAULT_COMBOS;
+  }
+}
+
+export function saveStoredCombos(combos: StudioCombo[]): void {
+  localStorage.setItem(STORAGE_KEYS.COMBOS, JSON.stringify(combos));
+}
+
 export function resetAllData(): void {
   const cleanProducts = DEFAULT_PRODUCTS.filter(p => !isBannedProduct(p));
   const cleanMaterials = DEFAULT_MATERIALS.filter(m => !isBannedMaterial(m));
@@ -327,6 +348,7 @@ export function resetAllData(): void {
   localStorage.setItem(STORAGE_KEYS.WORKSHOP, JSON.stringify(DEFAULT_WORKSHOP_INFO));
   localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(cleanMaterials));
   localStorage.setItem(STORAGE_KEYS.STOCK_IMPORTS, JSON.stringify(DEFAULT_STOCK_IMPORTS));
+  localStorage.setItem(STORAGE_KEYS.COMBOS, JSON.stringify(DEFAULT_COMBOS));
 }
 
 // Xóa toàn bộ đơn hàng và đặt lại công nợ về 0 (để tiệm bắt đầu bán hàng thực tế)
@@ -385,8 +407,9 @@ export function generateInitialDataTsCode(): string {
   const orders = getStoredOrders();
   const materials = getStoredMaterials();
   const stockImports = getStoredStockImports();
+  const combos = getStoredCombos();
 
-  return `import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt } from '../types';
+  return `import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from '../types';
 
 export const DEFAULT_WORKSHOP_INFO: WorkshopInfo = ${JSON.stringify(workshop, null, 2)};
 
@@ -399,6 +422,8 @@ export const DEFAULT_ORDERS: Order[] = ${JSON.stringify(orders, null, 2)};
 export const DEFAULT_MATERIALS: Material[] = ${JSON.stringify(materials, null, 2)};
 
 export const DEFAULT_STOCK_IMPORTS: StockImportReceipt[] = ${JSON.stringify(stockImports, null, 2)};
+
+export const DEFAULT_COMBOS: StudioCombo[] = ${JSON.stringify(combos, null, 2)};
 `;
 }
 
@@ -415,14 +440,15 @@ export function downloadInitialDataTs(): void {
 
 export function exportBackupJSON(): string {
   const data = {
-    version: '1.1',
+    version: '1.2',
     exportedAt: new Date().toISOString(),
     workshop: getStoredWorkshopInfo(),
     products: getStoredProducts(),
     customers: getStoredCustomers(),
     orders: getStoredOrders(),
     materials: getStoredMaterials(),
-    stockImports: getStoredStockImports()
+    stockImports: getStoredStockImports(),
+    combos: getStoredCombos()
   };
   return JSON.stringify(data, null, 2);
 }
@@ -455,6 +481,9 @@ export function importBackupJSON(jsonStr: string): boolean {
     }
     if (data.stockImports && Array.isArray(data.stockImports)) {
       saveStoredStockImports(data.stockImports);
+    }
+    if (data.combos && Array.isArray(data.combos)) {
+      saveStoredCombos(data.combos);
     }
     if (data.workshop) {
       saveStoredWorkshopInfo(data.workshop);

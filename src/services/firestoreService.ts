@@ -9,14 +9,15 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo } from '../types';
+import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo } from '../types';
 import {
   DEFAULT_PRODUCTS,
   DEFAULT_CUSTOMERS,
   DEFAULT_ORDERS,
   DEFAULT_MATERIALS,
   DEFAULT_STOCK_IMPORTS,
-  DEFAULT_WORKSHOP_INFO
+  DEFAULT_WORKSHOP_INFO,
+  DEFAULT_COMBOS
 } from '../data/initialData';
 import {
   getStoredProducts,
@@ -25,12 +26,14 @@ import {
   getStoredMaterials,
   getStoredStockImports,
   getStoredWorkshopInfo,
+  getStoredCombos,
   saveStoredProducts,
   saveStoredCustomers,
   saveStoredOrders,
   saveStoredMaterials,
   saveStoredStockImports,
-  saveStoredWorkshopInfo
+  saveStoredWorkshopInfo,
+  saveStoredCombos
 } from '../utils/storage';
 
 // Tên các Collection trên Firestore
@@ -40,7 +43,8 @@ export const COLLECTIONS = {
   ORDERS: 'orders',
   MATERIALS: 'materials',
   STOCK_IMPORTS: 'stock_imports',
-  SETTINGS: 'settings'
+  SETTINGS: 'settings',
+  COMBOS: 'combos'
 } as const;
 
 // 1. WORKSHOP INFO
@@ -49,19 +53,18 @@ export function subscribeWorkshopInfo(
   onError?: (err: Error) => void
 ) {
   const docRef = doc(db, COLLECTIONS.SETTINGS, 'workshop_info');
-  return onSnapshot(docRef, (snapshot) => {
+  return onSnapshot(docRef, { includeMetadataChanges: false }, (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.data() as WorkshopInfo;
       saveStoredWorkshopInfo(data);
       onData(data);
     } else {
-      // Nếu chưa có trên Firestore, lấy từ local hoặc default và lưu lên
       const initial = getStoredWorkshopInfo() || DEFAULT_WORKSHOP_INFO;
-      saveWorkshopInfoToFirestore(initial);
+      saveWorkshopInfoToFirestore(initial).catch(console.error);
       onData(initial);
     }
   }, (error) => {
-    console.error('Firestore workshop_info sync error:', error);
+    console.error('Firestore workshop_info real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -78,18 +81,16 @@ export function subscribeProducts(
   onError?: (err: Error) => void
 ) {
   const colRef = collection(db, COLLECTIONS.PRODUCTS);
-  return onSnapshot(colRef, (snapshot) => {
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Product[] = [];
     snapshot.forEach(docSnap => {
       list.push(docSnap.data() as Product);
     });
 
-    if (list.length > 0 || snapshot.metadata.fromCache === false) {
-      saveStoredProducts(list);
-      onData(list);
-    }
+    saveStoredProducts(list);
+    onData(list);
   }, (error) => {
-    console.error('Firestore products sync error:', error);
+    console.error('Firestore products real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -120,18 +121,16 @@ export function subscribeCustomers(
   onError?: (err: Error) => void
 ) {
   const colRef = collection(db, COLLECTIONS.CUSTOMERS);
-  return onSnapshot(colRef, (snapshot) => {
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Customer[] = [];
     snapshot.forEach(docSnap => {
       list.push(docSnap.data() as Customer);
     });
 
-    if (list.length > 0 || snapshot.metadata.fromCache === false) {
-      saveStoredCustomers(list);
-      onData(list);
-    }
+    saveStoredCustomers(list);
+    onData(list);
   }, (error) => {
-    console.error('Firestore customers sync error:', error);
+    console.error('Firestore customers real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -162,21 +161,23 @@ export function subscribeOrders(
   onError?: (err: Error) => void
 ) {
   const colRef = collection(db, COLLECTIONS.ORDERS);
-  return onSnapshot(colRef, (snapshot) => {
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Order[] = [];
     snapshot.forEach(docSnap => {
       list.push(docSnap.data() as Order);
     });
 
-    // Sort newest first
-    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Sắp xếp đơn mới nhất lên đầu
+    list.sort((a, b) => {
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : new Date(b.date).getTime();
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : new Date(a.date).getTime();
+      return timeB - timeA;
+    });
 
-    if (list.length > 0 || snapshot.metadata.fromCache === false) {
-      saveStoredOrders(list);
-      onData(list);
-    }
+    saveStoredOrders(list);
+    onData(list);
   }, (error) => {
-    console.error('Firestore orders sync error:', error);
+    console.error('Firestore orders real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -207,18 +208,16 @@ export function subscribeMaterials(
   onError?: (err: Error) => void
 ) {
   const colRef = collection(db, COLLECTIONS.MATERIALS);
-  return onSnapshot(colRef, (snapshot) => {
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Material[] = [];
     snapshot.forEach(docSnap => {
       list.push(docSnap.data() as Material);
     });
 
-    if (list.length > 0 || snapshot.metadata.fromCache === false) {
-      saveStoredMaterials(list);
-      onData(list);
-    }
+    saveStoredMaterials(list);
+    onData(list);
   }, (error) => {
-    console.error('Firestore materials sync error:', error);
+    console.error('Firestore materials real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -249,7 +248,7 @@ export function subscribeStockImports(
   onError?: (err: Error) => void
 ) {
   const colRef = collection(db, COLLECTIONS.STOCK_IMPORTS);
-  return onSnapshot(colRef, (snapshot) => {
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: StockImportReceipt[] = [];
     snapshot.forEach(docSnap => {
       list.push(docSnap.data() as StockImportReceipt);
@@ -257,12 +256,10 @@ export function subscribeStockImports(
 
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    if (list.length > 0 || snapshot.metadata.fromCache === false) {
-      saveStoredStockImports(list);
-      onData(list);
-    }
+    saveStoredStockImports(list);
+    onData(list);
   }, (error) => {
-    console.error('Firestore stock_imports sync error:', error);
+    console.error('Firestore stock_imports real-time sync error:', error);
     if (onError) onError(error);
   });
 }
@@ -287,6 +284,46 @@ export async function syncAllStockImportsToFirestore(imports: StockImportReceipt
   await batch.commit();
 }
 
+// 7. STUDIO COMBOS (Gói sản phẩm theo Studio / Thường mua)
+export function subscribeCombos(
+  onData: (combos: StudioCombo[]) => void,
+  onError?: (err: Error) => void
+) {
+  const colRef = collection(db, COLLECTIONS.COMBOS);
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
+    const list: StudioCombo[] = [];
+    snapshot.forEach(docSnap => {
+      list.push(docSnap.data() as StudioCombo);
+    });
+
+    saveStoredCombos(list);
+    onData(list);
+  }, (error) => {
+    console.error('Firestore combos real-time sync error:', error);
+    if (onError) onError(error);
+  });
+}
+
+export async function saveComboToFirestore(combo: StudioCombo): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.COMBOS, combo.id);
+  await setDoc(docRef, combo);
+}
+
+export async function deleteComboFromFirestore(comboId: string): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.COMBOS, comboId);
+  await deleteDoc(docRef);
+}
+
+export async function syncAllCombosToFirestore(combos: StudioCombo[]): Promise<void> {
+  saveStoredCombos(combos);
+  const batch = writeBatch(db);
+  combos.forEach(c => {
+    const ref = doc(db, COLLECTIONS.COMBOS, c.id);
+    batch.set(ref, c);
+  });
+  await batch.commit();
+}
+
 // =================================================================
 // INITIAL DATA SEED / MIGRATION (Chuyển toàn bộ dữ liệu hiện tại lên Cloud)
 // =================================================================
@@ -296,6 +333,7 @@ export async function pushCurrentLocalDataToFirestore(): Promise<{
   ordersCount: number;
   materialsCount: number;
   stockImportsCount: number;
+  combosCount: number;
 }> {
   const workshop = getStoredWorkshopInfo() || DEFAULT_WORKSHOP_INFO;
   const products = getStoredProducts().length > 0 ? getStoredProducts() : DEFAULT_PRODUCTS;
@@ -303,6 +341,7 @@ export async function pushCurrentLocalDataToFirestore(): Promise<{
   const orders = getStoredOrders().length > 0 ? getStoredOrders() : DEFAULT_ORDERS;
   const materials = getStoredMaterials().length > 0 ? getStoredMaterials() : DEFAULT_MATERIALS;
   const stockImports = getStoredStockImports().length > 0 ? getStoredStockImports() : DEFAULT_STOCK_IMPORTS;
+  const combos = getStoredCombos().length > 0 ? getStoredCombos() : DEFAULT_COMBOS;
 
   await saveWorkshopInfoToFirestore(workshop);
   await syncAllProductsToFirestore(products);
@@ -310,13 +349,15 @@ export async function pushCurrentLocalDataToFirestore(): Promise<{
   await syncAllOrdersToFirestore(orders);
   await syncAllMaterialsToFirestore(materials);
   await syncAllStockImportsToFirestore(stockImports);
+  await syncAllCombosToFirestore(combos);
 
   return {
     productsCount: products.length,
     customersCount: customers.length,
     ordersCount: orders.length,
     materialsCount: materials.length,
-    stockImportsCount: stockImports.length
+    stockImportsCount: stockImports.length,
+    combosCount: combos.length
   };
 }
 

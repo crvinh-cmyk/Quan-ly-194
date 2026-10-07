@@ -88,6 +88,20 @@
         "items": { "type": "array" }
       },
       "required": ["id", "receiptNumber", "date"]
+    },
+    "StudioCombo": {
+      "title": "StudioCombo",
+      "description": "Product combo preset tailored for specific studios or general use",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "studioName": { "type": "string" },
+        "customerId": { "type": "string" },
+        "description": { "type": "string" },
+        "items": { "type": "array" }
+      },
+      "required": ["id", "name", "items"]
     }
   },
   "firestore": {
@@ -114,6 +128,10 @@
     "/stockImports/{receiptId}": {
       "schema": "StockImportReceipt",
       "description": "Collection of stock import receipts"
+    },
+    "/combos/{comboId}": {
+      "schema": "StudioCombo",
+      "description": "Collection of product combos"
     }
   }
 }

@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Product, Customer, Order, OrderItem, Material, ProductCategory } from '../types';
+import { Product, Customer, Order, OrderItem, Material, ProductCategory, StudioCombo } from '../types';
 import { formatCurrency, formatNumber, getTodayDateString, formatDateVN, numberToVietnameseWords } from '../utils/formatters';
 import { calculateOrderBOM, calculateItemBOM, createMaterialDeductionRecords, extractEffectiveSize, normalizeSize } from '../utils/materialBOM';
 import {
   Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
   ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
-  Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X
+  Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X, ShoppingBag, Building2
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
+import { StudioComboModal } from './StudioComboModal';
 import {
   POPULAR_PRODUCT_PRESETS,
   PopularPresetDef,
@@ -27,6 +28,9 @@ interface SalesInvoiceFormProps {
   customers: Customer[];
   allOrders: Order[];
   materials?: Material[];
+  combos?: StudioCombo[];
+  onSaveCombo?: (combo: StudioCombo) => void;
+  onDeleteCombo?: (comboId: string) => void;
   onSaveOrder: (order: Order, openPrint: boolean) => void;
   onAddNewCustomer: (customer: Customer) => void;
   onAddNewProduct: (product: Product) => void;
@@ -38,6 +42,9 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
   customers,
   allOrders,
   materials = [],
+  combos = [],
+  onSaveCombo = () => {},
+  onDeleteCombo = () => {},
   onSaveOrder,
   onAddNewCustomer,
   onAddNewProduct,
@@ -138,6 +145,16 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
   });
   const [quickInsertToast, setQuickInsertToast] = useState<string>('');
 
+  // Studio Combo modal & quick state
+  const [showComboModal, setShowComboModal] = useState<boolean>(false);
+  const [initialRowsForCombo, setInitialRowsForCombo] = useState<{
+    productCode: string;
+    productName: string;
+    size: string;
+    quantity: number;
+    note?: string;
+  }[] | undefined>(undefined);
+
   // Success alert state
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>('');
   const [lastSavedOrder, setLastSavedOrder] = useState<Order | null>(null);
@@ -176,6 +193,76 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
     } else {
       setPreviousDebt(customer.initialDebt || 0);
     }
+  };
+
+  // Find suggested combos matching the currently selected Studio / Customer
+  const suggestedCombosForCurrentCustomer = useMemo(() => {
+    const rawTarget = (customerName || customerSearch || '').trim();
+    if (!rawTarget && !selectedCustomerId) {
+      return combos.filter(c => c.studioName === 'Dùng chung');
+    }
+
+    const target = rawTarget.toLowerCase();
+    const matched = combos.filter(c => {
+      if (c.customerId && selectedCustomerId && c.customerId === selectedCustomerId) return true;
+      const cStudio = (c.studioName || '').toLowerCase().trim();
+      const cName = (c.name || '').toLowerCase().trim();
+      if (cStudio && target && (cStudio.includes(target) || target.includes(cStudio))) return true;
+      if (cName && target && (cName.includes(target) || target.includes(cName))) return true;
+      return false;
+    });
+
+    if (matched.length > 0) return matched;
+    // Fallback to shared combos if no specific match
+    return combos.filter(c => c.studioName === 'Dùng chung');
+  }, [combos, customerName, customerSearch, selectedCustomerId]);
+
+  // Apply a Studio Combo into the current invoice table
+  const handleApplyComboToOrder = (combo: StudioCombo) => {
+    if (!combo.items || combo.items.length === 0) return;
+
+    const newRows: OrderItem[] = combo.items.map((ci, idx) => {
+      // Look up product by code
+      let matchedProd = products.find(p => p.code.toUpperCase() === ci.productCode.toUpperCase());
+      if (!matchedProd && popularTier) {
+        const tierCode = convertProductCodeForTier(ci.productCode, popularTier);
+        matchedProd = products.find(p => p.code.toUpperCase() === tierCode.toUpperCase());
+      }
+
+      const unitPrice = matchedProd ? matchedProd.price : (ci.defaultPrice || 0);
+      const size = ci.size || (matchedProd ? matchedProd.size : '');
+      const prodName = ci.productName || (matchedProd ? matchedProd.name : ci.productCode);
+      const qty = ci.quantity > 0 ? ci.quantity : 1;
+
+      return {
+        id: `row-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 5)}`,
+        date: orderDate,
+        productCode: matchedProd ? matchedProd.code : ci.productCode,
+        productName: prodName,
+        size: size,
+        price: unitPrice,
+        quantity: qty,
+        amount: qty * unitPrice,
+        note: ci.note || ''
+      };
+    });
+
+    setItems(prev => {
+      // Check if table currently only has 1 empty row
+      const isOnlyOneEmptyRow =
+        prev.length === 1 &&
+        !prev[0].productCode.trim() &&
+        !prev[0].productName.trim() &&
+        (!prev[0].price || prev[0].price === 0);
+
+      if (isOnlyOneEmptyRow) {
+        return newRows;
+      }
+      return [...prev, ...newRows];
+    });
+
+    setQuickInsertToast(`✨ Đã áp dụng Combo [${combo.name}] (+${newRows.length} sản phẩm) vào đơn hàng!`);
+    setTimeout(() => setQuickInsertToast(''), 4000);
   };
 
   // Auto-fill row when product code matches or is selected
@@ -849,7 +936,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           </div>
 
           {/* Quick Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={() => handleResetForm(true)}
@@ -858,6 +945,18 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
             >
               <Plus className="w-3.5 h-3.5" />
               Tạo đơn mới
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setInitialRowsForCombo(undefined);
+                setShowComboModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 text-xs font-bold transition shadow-xs cursor-pointer"
+              title="Mở danh sách các Gói Combo theo Studio đã tạo sẵn"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Gói Combo Studio ({combos.length})</span>
             </button>
             <button
               type="button"
@@ -977,6 +1076,73 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Dynamic Studio Combo Proposal Banner (TỰ ĐỘNG ĐỀ XUẤT COMBO KHI CHỌN STUDIO) */}
+        {suggestedCombosForCurrentCustomer.length > 0 ? (
+          <div className="px-4 py-3 bg-gradient-to-r from-amber-500/20 via-amber-400/10 to-amber-500/5 border-b border-amber-300/80 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <span className="p-2 bg-amber-500 text-slate-950 rounded-xl shadow-xs shrink-0 font-black">
+                <Sparkles className="w-4 h-4" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase text-amber-950 tracking-tight flex items-center gap-1">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-600" />
+                    Đề xuất Combo cho {customerName || 'Studio'}:
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-white text-amber-900 border border-amber-300 shadow-2xs">
+                    {suggestedCombosForCurrentCustomer[0].name} ({suggestedCombosForCurrentCustomer[0].items.length} món)
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-900/90 mt-0.5">
+                  {suggestedCombosForCurrentCustomer[0].description ||
+                    suggestedCombosForCurrentCustomer[0].items.map(it => `${it.quantity}x ${it.productCode} (${it.size})`).join(' • ')}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <button
+                type="button"
+                onClick={() => handleApplyComboToOrder(suggestedCombosForCurrentCustomer[0])}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs transition cursor-pointer"
+                title="Tự động thêm trọn bộ sản phẩm trong Combo này vào bảng bán hàng"
+              >
+                <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                <span>⚡ Áp dụng Combo này vào đơn (+{suggestedCombosForCurrentCustomer[0].items.length} món)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInitialRowsForCombo(undefined);
+                  setShowComboModal(true);
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-slate-800 border border-amber-300 text-xs font-bold transition cursor-pointer shadow-2xs"
+              >
+                <span>Xem / Đổi Combo ({combos.length})</span>
+              </button>
+            </div>
+          </div>
+        ) : customerName.trim() ? (
+          <div className="px-4 py-2 bg-slate-100/80 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>Studio <strong>{customerName}</strong> chưa có gói Combo mẫu riêng.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setInitialRowsForCombo(undefined);
+                setShowComboModal(true);
+              }}
+              className="text-[11px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer flex items-center gap-1 self-start sm:self-auto"
+            >
+              <Plus className="w-3 h-3" />
+              + Tạo Combo sản phẩm hay mua cho {customerName}
+            </button>
+          </div>
+        ) : null}
 
         {/* Quick Insert Toast Message if active */}
         {quickInsertToast && (
@@ -1272,7 +1438,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
 
         {/* Add row actions bar */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleAddRow}
@@ -1283,12 +1449,53 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setShowCatalogModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-amber-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+              onClick={() => {
+                if (selectedCustomerId) {
+                  const cust = customers.find(c => c.id === selectedCustomerId);
+                  if (cust?.customerType) setCatalogCategory(cust.customerType);
+                }
+                setShowCatalogModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs shadow-2xs transition cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <Zap className="w-3.5 h-3.5 fill-slate-950" />
               Chọn nhanh từ bảng giá tiệm
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setInitialRowsForCombo(undefined);
+                setShowComboModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-amber-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs"
+              title="Mở bảng chọn Combo Studio"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              Gói Combo ({combos.length})
+            </button>
+            {items.some(r => r.productCode.trim() || r.productName.trim()) && (
+              <button
+                type="button"
+                onClick={() => {
+                  const valid = items
+                    .filter(r => r.productCode.trim() || r.productName.trim())
+                    .map(r => ({
+                      productCode: r.productCode,
+                      productName: r.productName,
+                      size: r.size,
+                      quantity: r.quantity || 1,
+                      note: r.note || ''
+                    }));
+                  setInitialRowsForCombo(valid);
+                  setShowComboModal(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-2xs"
+                title="Lưu tất cả sản phẩm đang có trong bảng này thành gói Combo mẫu để lần sau chọn nhanh"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <span>💾 Lưu thành Combo {customerName ? `cho ${customerName}` : ''}</span>
+              </button>
+            )}
           </div>
           <span className="text-xs text-slate-500 font-medium">
             Số dòng hàng: <strong className="text-slate-800">{items.length}</strong>
@@ -1746,10 +1953,11 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                 </button>
               </div>
 
-              {/* Price Tier Category Filter Tabs */}
+              {/* Price Tier & Combo Filter Tabs */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
                 {[
-                  { id: 'all', label: `Tất cả bảng giá (${products.length})` },
+                  { id: 'all', label: `Tất cả (${products.length})` },
+                  { id: 'combo', label: `⚡ COMBO STUDIO & GÓI QUEN (${combos.length})` },
                   { id: 'GIÁ STUDIO', label: `🏢 1. GIÁ STUDIO (${products.filter(p => p.category === 'GIÁ STUDIO').length})` },
                   { id: 'Freelance', label: `📸 2. Freelance (${products.filter(p => p.category === 'Freelance').length})` },
                   { id: 'Khách Lẻ', label: `👤 3. Khách Lẻ (${products.filter(p => p.category === 'Khách Lẻ').length})` },
@@ -1758,9 +1966,11 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                     key={tab.id}
                     type="button"
                     onClick={() => setCatalogCategory(tab.id)}
-                    className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
                       catalogCategory === tab.id
                         ? 'bg-slate-900 text-white shadow-xs'
+                        : tab.id === 'combo'
+                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
                         : 'bg-white hover:bg-slate-200 text-slate-700 border border-slate-200'
                     }`}
                   >
@@ -1770,9 +1980,183 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
               </div>
             </div>
 
-            {/* Modal Body: Product Grid with Favorites at the Very Top */}
-            <div className="p-3 sm:p-4 overflow-y-auto max-h-[60vh] flex-1 bg-slate-100/60">
-              {sortedCatalogProducts.length > 0 ? (
+            {/* Modal Body */}
+            <div className="p-3 sm:p-4 overflow-y-auto max-h-[60vh] flex-1 bg-slate-100/60 space-y-4">
+              {/* SPOTLIGHT BANNER: GỢI Ý COMBO CHO STUDIO ĐANG CHỌN */}
+              {catalogCategory !== 'combo' && suggestedCombosForCurrentCustomer.length > 0 && !catalogSearch.trim() && (
+                <div className="p-3 sm:p-3.5 bg-gradient-to-r from-amber-500/20 via-amber-400/10 to-amber-500/10 border-2 border-amber-400 rounded-2xl shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-amber-300/60">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 bg-amber-500 text-slate-950 rounded-lg font-black">
+                        <Sparkles className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-black uppercase text-amber-950">
+                            Đề xuất Combo quen thuộc:
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-white text-amber-900 border border-amber-300">
+                            {suggestedCombosForCurrentCustomer[0].name}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-900/80">
+                          {suggestedCombosForCurrentCustomer[0].description || `Gói sản phẩm thường mua của ${customerName || 'Studio'}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleApplyComboToOrder(suggestedCombosForCurrentCustomer[0]);
+                          setShowCatalogModal(false);
+                        }}
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                        <span>⚡ Thêm trọn bộ Combo này</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Individual Products inside suggested combo */}
+                  <div className="pt-2 flex flex-wrap gap-1.5 items-center">
+                    <span className="text-[11px] font-bold text-amber-950/80 mr-1">Các món trong Combo:</span>
+                    {suggestedCombosForCurrentCustomer[0].items.map((ci, idx) => {
+                      const matchedP = products.find(p => p.code.toUpperCase() === ci.productCode.toUpperCase());
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            if (matchedP) handleSelectProductFromCatalog(matchedP);
+                            else {
+                              // insert custom item
+                              handleQuickInsertPopularProduct({
+                                id: `c-item-${Date.now()}`,
+                                code: ci.productCode,
+                                name: ci.productName || ci.productCode,
+                                size: ci.size || '60x90',
+                                price: ci.defaultPrice || 0,
+                                category: 'GIÁ STUDIO',
+                                unit: 'tấm'
+                              });
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-white hover:bg-amber-100/80 border border-amber-300 rounded-lg text-xs font-semibold text-slate-800 flex items-center gap-1.5 transition shadow-2xs cursor-pointer group"
+                          title="Bấm để thêm 1 món này vào đơn"
+                        >
+                          <span className="font-mono font-black text-amber-700 group-hover:text-amber-900">{ci.productCode}</span>
+                          <span className="text-[11px] text-slate-600 truncate max-w-[120px]">{ci.productName} ({ci.size})</span>
+                          <span className="text-amber-600 font-bold group-hover:text-slate-950">+ Thêm</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 1: HIỂN THỊ DANH SÁCH COMBO STUDIO */}
+              {catalogCategory === 'combo' ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-700">
+                      Danh sách {combos.length} gói Combo Studio đã thiết lập sẵn:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCatalogModal(false);
+                        setInitialRowsForCombo(undefined);
+                        setShowComboModal(true);
+                      }}
+                      className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      + Tạo / Quản lý Combo
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {combos.map(combo => {
+                      const activeCust = customerName || customerSearch || '';
+                      const isSuggested = activeCust && (
+                        (combo.studioName || '').toLowerCase().includes(activeCust.toLowerCase()) ||
+                        activeCust.toLowerCase().includes((combo.studioName || '').toLowerCase()) ||
+                        combo.name.toLowerCase().includes(activeCust.toLowerCase())
+                      );
+
+                      return (
+                        <div
+                          key={combo.id}
+                          className={`p-3.5 rounded-2xl border transition flex flex-col justify-between gap-2.5 ${
+                            isSuggested
+                              ? 'bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/30 shadow-xs'
+                              : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-1 mb-1">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-black bg-slate-100 text-slate-700 border border-slate-200">
+                                🏢 {combo.studioName || 'Dùng chung'}
+                              </span>
+                              {isSuggested && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950">
+                                  ⭐ Đề xuất cho {activeCust}
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="font-extrabold text-xs sm:text-sm text-slate-900">
+                              {combo.name}
+                            </h4>
+                            {combo.description && (
+                              <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">
+                                {combo.description}
+                              </p>
+                            )}
+
+                            {/* Items preview */}
+                            <div className="mt-2.5 space-y-1 bg-slate-50 p-2 rounded-xl border border-slate-100 text-xs">
+                              {combo.items.map((ci, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-slate-700">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="px-1 py-0.2 rounded font-mono font-bold text-[10px] bg-white border border-slate-200 text-amber-900 shrink-0">
+                                      {ci.quantity}x
+                                    </span>
+                                    <span className="font-bold text-slate-900 truncate">
+                                      {ci.productCode}
+                                    </span>
+                                    <span className="text-slate-500 text-[11px] truncate">
+                                      - {ci.productName} ({ci.size})
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleApplyComboToOrder(combo);
+                                setShowCatalogModal(false);
+                              }}
+                              className="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                              <span>Thêm trọn bộ Combo này (+{combo.items.length} món)</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : sortedCatalogProducts.length > 0 ? (
+                /* TAB 2: HIỂN THỊ LƯỚI SẢN PHẨM BẢNG GIÁ */
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
                   {sortedCatalogProducts.map(product => {
                     const isFav = isProductFavorite(product);
@@ -1873,7 +2257,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                 <span>
-                  💡 Mẹo: Bấm ngôi sao <strong className="text-amber-600">⭐</strong> trên bất kỳ sản phẩm nào để đưa lên hàng đầu vĩnh viễn.
+                  💡 Mẹo: Bấm <strong className="text-amber-600">⚡ COMBO STUDIO</strong> hoặc đánh dấu sao <strong className="text-amber-600">⭐</strong> để chọn nhanh trong 1 chạm.
                 </span>
               </div>
 
@@ -1889,6 +2273,35 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Quản Lý & Thiết Lập Gói Combo Studio */}
+      {showComboModal && (
+        <StudioComboModal
+          combos={combos}
+          products={products}
+          customers={customers}
+          currentCustomerName={customerName || customerSearch || ''}
+          currentCustomerId={selectedCustomerId}
+          initialCreateForStudio={customerName || customerSearch || ''}
+          initialRowsFromOrder={initialRowsForCombo}
+          onSelectCombo={(combo) => {
+            handleApplyComboToOrder(combo);
+            setShowComboModal(false);
+          }}
+          onSaveCombo={(combo) => {
+            onSaveCombo(combo);
+            setQuickInsertToast(`Đã lưu Combo "${combo.name}" thành công!`);
+            setTimeout(() => setQuickInsertToast(''), 3000);
+          }}
+          onDeleteCombo={(comboId) => {
+            onDeleteCombo(comboId);
+          }}
+          onClose={() => {
+            setShowComboModal(false);
+            setInitialRowsForCombo(undefined);
+          }}
+        />
       )}
 
       {/* Quick Customer Modal */}
