@@ -1,6 +1,6 @@
 import React from 'react';
 import { WorkshopInfo } from '../types';
-import { ShoppingCart, FileText, BarChart3, Tag, Users, Settings, Database, Boxes } from 'lucide-react';
+import { ShoppingCart, FileText, BarChart3, Tag, Users, Settings, Database, Boxes, Cloud, CloudCheck, RefreshCw } from 'lucide-react';
 
 export type ActiveTab = 'pos' | 'orders' | 'inventory' | 'analytics' | 'products' | 'customers';
 
@@ -12,6 +12,7 @@ interface HeaderProps {
   onOpenDataManagement: () => void;
   ordersCount: number;
   lowStockCount?: number;
+  firestoreStatus?: 'connected' | 'syncing' | 'offline';
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,7 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenDataManagement,
   ordersCount,
-  lowStockCount = 0
+  lowStockCount = 0,
+  firestoreStatus = 'connected'
 }) => {
   return (
     <header className="bg-slate-900 text-white sticky top-0 z-40 shadow-lg border-b border-slate-800 no-print">
@@ -41,12 +43,13 @@ export const Header: React.FC<HeaderProps> = ({
                   <h1 className="font-extrabold text-base tracking-tight text-white uppercase group-hover:text-amber-400 transition-colors">
                     {workshop.name}
                   </h1>
-                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    Chuyên Nghiệp
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <Cloud className="w-3 h-3 text-emerald-400 animate-pulse" />
+                    Cloud Firestore
                   </span>
                 </div>
                 <p className="hidden md:block text-[11px] text-slate-400 font-medium">
-                  Hệ thống quản lý bán hàng & in ảnh thông minh
+                  Hệ thống quản lý bán hàng & in ảnh đồng bộ trực tuyến
                 </p>
               </div>
             </div>
@@ -148,11 +151,11 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Clear / Seed Data Management Button */}
             <button
               onClick={onOpenDataManagement}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-red-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
-              title="Xóa toàn bộ dữ liệu phần mềm hoặc nạp dữ liệu mẫu"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
+              title="Đồng bộ đám mây, sao lưu hoặc nạp dữ liệu"
             >
-              <Database className="w-4 h-4 text-red-400" />
-              <span className="hidden lg:inline text-[11px]">Xóa / Nạp Dữ Liệu</span>
+              <Database className="w-4 h-4 text-amber-400" />
+              <span className="hidden lg:inline text-[11px]">Đồng Bộ & Dữ Liệu</span>
             </button>
 
             <button

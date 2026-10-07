@@ -10,9 +10,10 @@ import {
   generateInitialDataTsCode,
   downloadInitialDataTs
 } from '../utils/storage';
+import { pushCurrentLocalDataToFirestore } from '../services/firestoreService';
 import {
   Trash2, Database, Download, RefreshCw, AlertTriangle, CheckCircle2,
-  ShieldAlert, Sparkles, X, Boxes, Upload, Copy, Check, FileCode, Github, ExternalLink
+  ShieldAlert, Sparkles, X, Boxes, Upload, Copy, Check, FileCode, Github, ExternalLink, Cloud, CloudUpload
 } from 'lucide-react';
 
 interface DataManagementModalProps {
@@ -38,6 +39,20 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pastedJson, setPastedJson] = useState('');
   const [pasteError, setPasteError] = useState('');
+
+  const handleSyncToFirestore = async () => {
+    try {
+      setSuccessMessage('Đang đồng bộ toàn bộ dữ liệu lên Cloud Firestore...');
+      const res = await pushCurrentLocalDataToFirestore();
+      setSuccessMessage(`Đã đồng bộ thành công lên Cloud Firestore: ${res.productsCount} sản phẩm, ${res.customersCount} khách hàng, ${res.ordersCount} đơn hàng!`);
+      onDataChanged();
+      setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (e) {
+      console.error(e);
+      setSuccessMessage('Lỗi khi đồng bộ lên Cloud Firestore. Vui lòng kiểm tra kết nối.');
+      setTimeout(() => setSuccessMessage(''), 4000);
+    }
+  };
 
   const handleBackup = () => {
     downloadBackupJSON();
@@ -195,6 +210,42 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
               <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-blue-700">
                 {materialsCount} Vật tư
               </span>
+            </div>
+          </div>
+
+          {/* ======================================================== */}
+          {/* SECTION 0: ĐỒNG BỘ TRỰC TUYẾN CLOUD FIRESTORE */}
+          {/* ======================================================== */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-slate-50 border-2 border-emerald-400/80 shadow-xs space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-emerald-600 text-white rounded-lg">
+                  <Cloud className="w-4 h-4" />
+                </span>
+                <div>
+                  <h4 className="font-black text-sm text-slate-900 uppercase tracking-tight flex items-center gap-1.5">
+                    <span>Đồng Bộ Trực Tuyến Cloud Firestore</span>
+                    <span className="px-2 py-0.2 rounded-full text-[10px] font-black bg-emerald-600 text-white">
+                      Thời Gian Thực
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-600">
+                    Toàn bộ đơn hàng, khách hàng, sản phẩm và kho đã được kết nối với Firebase Firestore (<code className="font-mono text-emerald-800">lab-f7f0a</code>). Mọi thay đổi sẽ tự động đồng bộ tức thì trên tất cả thiết bị!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleSyncToFirestore}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
+                title="Đẩy toàn bộ dữ liệu hiện tại lên Cloud Firestore"
+              >
+                <CloudUpload className="w-4 h-4" />
+                <span>Đồng Bộ Toàn Bộ Lên Cloud Firestore Ngay</span>
+              </button>
             </div>
           </div>
 
