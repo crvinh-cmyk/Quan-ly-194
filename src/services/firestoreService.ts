@@ -95,11 +95,17 @@ export function subscribeProducts(
   });
 }
 
+/**
+ * Lưu hoặc cập nhật 1 sản phẩm trực tiếp lên Firestore
+ */
 export async function saveProductToFirestore(product: Product): Promise<void> {
   const docRef = doc(db, COLLECTIONS.PRODUCTS, product.id);
-  await setDoc(docRef, product);
+  await setDoc(docRef, product, { merge: true });
 }
 
+/**
+ * Xóa 1 sản phẩm trực tiếp từ Firestore
+ */
 export async function deleteProductFromFirestore(productId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.PRODUCTS, productId);
   await deleteDoc(docRef);
@@ -110,7 +116,7 @@ export async function syncAllProductsToFirestore(products: Product[]): Promise<v
   const batch = writeBatch(db);
   products.forEach(p => {
     const ref = doc(db, COLLECTIONS.PRODUCTS, p.id);
-    batch.set(ref, p);
+    batch.set(ref, p, { merge: true });
   });
   await batch.commit();
 }
@@ -222,11 +228,17 @@ export function subscribeMaterials(
   });
 }
 
+/**
+ * Lưu hoặc cập nhật 1 vật tư trực tiếp lên Firestore
+ */
 export async function saveMaterialToFirestore(material: Material): Promise<void> {
   const docRef = doc(db, COLLECTIONS.MATERIALS, material.id);
-  await setDoc(docRef, material);
+  await setDoc(docRef, material, { merge: true });
 }
 
+/**
+ * Xóa 1 vật tư trực tiếp từ Firestore
+ */
 export async function deleteMaterialFromFirestore(materialId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.MATERIALS, materialId);
   await deleteDoc(docRef);
@@ -237,7 +249,7 @@ export async function syncAllMaterialsToFirestore(materials: Material[]): Promis
   const batch = writeBatch(db);
   materials.forEach(m => {
     const ref = doc(db, COLLECTIONS.MATERIALS, m.id);
-    batch.set(ref, m);
+    batch.set(ref, m, { merge: true });
   });
   await batch.commit();
 }
@@ -361,13 +373,22 @@ export async function pushCurrentLocalDataToFirestore(): Promise<{
   };
 }
 
-// Kiểm tra xem Firestore đã có dữ liệu chưa, nếu hoàn toàn rỗng thì tự động seed
+// Kiểm tra xem Firestore đã có dữ liệu chưa, nếu hoàn toàn rỗng thì nạp an toàn dữ liệu mặc định ban đầu
 export async function initializeFirestoreIfEmpty(): Promise<boolean> {
   try {
     const productsSnap = await getDocs(collection(db, COLLECTIONS.PRODUCTS));
     if (productsSnap.empty) {
-      console.log('Firestore is empty, seeding initial data to cloud...');
-      await pushCurrentLocalDataToFirestore();
+      console.log('Firestore rỗng, đang khởi tạo dữ liệu mặc định ban đầu...');
+      const batch = writeBatch(db);
+      DEFAULT_PRODUCTS.forEach(p => {
+        const ref = doc(db, COLLECTIONS.PRODUCTS, p.id);
+        batch.set(ref, p, { merge: true });
+      });
+      DEFAULT_MATERIALS.forEach(m => {
+        const ref = doc(db, COLLECTIONS.MATERIALS, m.id);
+        batch.set(ref, m, { merge: true });
+      });
+      await batch.commit();
       return true;
     }
     return false;

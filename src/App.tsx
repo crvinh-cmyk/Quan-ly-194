@@ -495,7 +495,9 @@ export default function App() {
   const handleBatchSaveProducts = (newProducts: Product[]) => {
     setProducts(newProducts);
     saveStoredProducts(newProducts);
-    syncAllProductsToFirestore(newProducts).catch(console.error);
+    newProducts.forEach(p => {
+      saveProductToFirestore(p).catch(console.error);
+    });
   };
 
   // Delete order (and automatically restore any deducted inventory materials back to stock!)

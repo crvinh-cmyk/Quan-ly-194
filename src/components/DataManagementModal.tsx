@@ -10,10 +10,9 @@ import {
   generateInitialDataTsCode,
   downloadInitialDataTs
 } from '../utils/storage';
-import { pushCurrentLocalDataToFirestore } from '../services/firestoreService';
 import {
   Trash2, Database, Download, RefreshCw, AlertTriangle, CheckCircle2,
-  ShieldAlert, Sparkles, X, Boxes, Upload, Copy, Check, FileCode, Github, ExternalLink, Cloud, CloudUpload
+  ShieldAlert, Sparkles, X, Boxes, Upload, Copy, Check, FileCode, Github, ExternalLink, Cloud, CheckCircle
 } from 'lucide-react';
 
 interface DataManagementModalProps {
@@ -39,20 +38,6 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pastedJson, setPastedJson] = useState('');
   const [pasteError, setPasteError] = useState('');
-
-  const handleSyncToFirestore = async () => {
-    try {
-      setSuccessMessage('Đang đồng bộ toàn bộ dữ liệu lên Cloud Firestore...');
-      const res = await pushCurrentLocalDataToFirestore();
-      setSuccessMessage(`Đã đồng bộ thành công lên Cloud Firestore: ${res.productsCount} sản phẩm, ${res.customersCount} khách hàng, ${res.ordersCount} đơn hàng!`);
-      onDataChanged();
-      setTimeout(() => setSuccessMessage(''), 4000);
-    } catch (e) {
-      console.error(e);
-      setSuccessMessage('Lỗi khi đồng bộ lên Cloud Firestore. Vui lòng kiểm tra kết nối.');
-      setTimeout(() => setSuccessMessage(''), 4000);
-    }
-  };
 
   const handleBackup = () => {
     downloadBackupJSON();
@@ -225,27 +210,25 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
                 <div>
                   <h4 className="font-black text-sm text-slate-900 uppercase tracking-tight flex items-center gap-1.5">
                     <span>Đồng Bộ Trực Tuyến Cloud Firestore</span>
-                    <span className="px-2 py-0.2 rounded-full text-[10px] font-black bg-emerald-600 text-white">
-                      Thời Gian Thực
+                    <span className="px-2 py-0.2 rounded-full text-[10px] font-black bg-emerald-600 text-white animate-pulse">
+                      Đang Hoạt Động (Real-time)
                     </span>
                   </h4>
-                  <p className="text-xs text-slate-600">
-                    Toàn bộ đơn hàng, khách hàng, sản phẩm và kho đã được kết nối với Firebase Firestore (<code className="font-mono text-emerald-800">lab-f7f0a</code>). Mọi thay đổi sẽ tự động đồng bộ tức thì trên tất cả thiết bị!
+                  <p className="text-xs text-slate-600 mt-1">
+                    Hệ thống tự động đồng bộ thời gian thực theo từng vật tư, sản phẩm, đơn hàng qua Firebase Firestore (<code className="font-mono text-emerald-800 font-bold">lab-f7f0a</code>).
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleSyncToFirestore}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
-                title="Đẩy toàn bộ dữ liệu hiện tại lên Cloud Firestore"
-              >
-                <CloudUpload className="w-4 h-4" />
-                <span>Đồng Bộ Toàn Bộ Lên Cloud Firestore Ngay</span>
-              </button>
+            <div className="p-3 bg-white/90 rounded-xl border border-emerald-200 text-xs text-emerald-900 flex items-start gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-bold">Cơ chế bảo vệ dữ liệu an toàn:</p>
+                <p className="text-[11px] text-slate-600">
+                  Khi bạn <strong>Thêm, Sửa, hoặc Xóa</strong> bất kỳ vật tư hoặc sản phẩm nào, hệ thống sẽ gửi trực tiếp thay đổi lên Cloud ngay lập tức. Mọi thiết bị khác (Vercel & AI Studio) sẽ tự động nhận dữ liệu mới mà không cần bấm nút đồng bộ hay làm mới trang.
+                </p>
+              </div>
             </div>
           </div>
 
