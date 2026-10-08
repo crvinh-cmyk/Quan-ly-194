@@ -10,6 +10,36 @@ import {
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 
+// 1. Danh sách cố định 7 Nhà Cung Cấp chuẩn hóa cho xưởng
+export const FIXED_SUPPLIERS = [
+  'Trang Phóng',
+  'SVP',
+  'Xuân Trường HN',
+  'Toản HN',
+  'Ninh Trang',
+  'Tuấn Tú Vinh',
+  'Khác'
+] as const;
+
+// 2. Danh sách gợi ý cố định các Mặt Hàng / Chủng Loại Vật Tư Nhập
+export const FIXED_IMPORT_ITEMS = [
+  'Ván MDF',
+  'Fomex',
+  'Khung Phào',
+  'Mica',
+  'Màng lụa',
+  'Nẹp Viền',
+  'Keo',
+  'Chân sắt',
+  'Móc treo',
+  'Màng PE',
+  'Băng keo',
+  'Giấy',
+  'Mực',
+  'Ruột album',
+  'Khác'
+] as const;
+
 interface InventoryManagementViewProps {
   materials: Material[];
   stockImports: StockImportReceipt[];
@@ -321,7 +351,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
   const handleOpenManualInward = (presetSupplier?: string) => {
     setEditingImportReceipt(null);
     setImportDate(new Date().toISOString().slice(0, 10));
-    setImportSupplier(presetSupplier || (allSuppliersList[0] || ''));
+    setImportSupplier(presetSupplier || '');
     setImportItemName('');
     setImportAmount(0);
     setImportQuantity(1);
@@ -1535,14 +1565,37 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Nhà Cung Cấp / Nơi Mua Hàng</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">Nhà Cung Cấp / Nơi Mua Hàng</label>
+                  <span className="text-[11px] text-amber-700 font-medium">7 NCC Chọn Nhanh</span>
+                </div>
                 <input
                   type="text"
                   value={formSupplier}
                   onChange={e => setFormSupplier(e.target.value)}
-                  placeholder="VD: Xưởng Gỗ Phú Mỹ, Cty Minh Khang..."
+                  placeholder="VD: Trang Phóng, SVP, Xuân Trường HN, Toản HN..."
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-amber-500 outline-none"
                 />
+                {/* 7 Fixed Suppliers Quick Chips */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                  {FIXED_SUPPLIERS.map(s => {
+                    const isSelected = formSupplier.trim().toLowerCase() === s.toLowerCase();
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setFormSupplier(s)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                          isSelected
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                            : 'bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-950 border-slate-200 active:scale-95'
+                        }`}
+                      >
+                        {isSelected ? `✓ ${s}` : `+ ${s}`}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>
@@ -1630,48 +1683,75 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   <label className="block text-xs font-bold text-slate-700">
                     Tên Nhà Cung Cấp / Nơi Mua <span className="text-rose-500">*</span>
                   </label>
-                  {allSuppliersList.length > 0 && (
-                    <span className="text-[11px] text-slate-400">Chọn nhanh từ danh sách bên dưới</span>
-                  )}
+                  <span className="text-[11px] text-amber-700 font-medium">7 NCC Chọn Nhanh</span>
                 </div>
                 <input
                   type="text"
                   required
                   value={importSupplier}
                   onChange={e => setImportSupplier(e.target.value)}
-                  placeholder="VD: Xưởng Gỗ Phú Mỹ, Cty Minh Khang, Tổng Kho Mica Hà Nội..."
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none"
+                  placeholder="Chọn nhanh gợi ý bên dưới hoặc tự nhập tên NCC..."
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-200 transition"
                 />
 
-                {/* Quick supplier chips */}
-                {allSuppliersList.length > 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                    {allSuppliersList.slice(0, 6).map(s => (
+                {/* Danh sách 7 nút chọn nhanh cố định cho Nhà Cung Cấp */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                  {FIXED_SUPPLIERS.map(s => {
+                    const isSelected = importSupplier.trim().toLowerCase() === s.toLowerCase();
+                    return (
                       <button
                         key={s}
                         type="button"
                         onClick={() => setImportSupplier(s)}
-                        className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 text-[11px] font-medium border border-slate-200 transition"
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                          isSelected
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                            : 'bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-950 border-slate-200 active:scale-95'
+                        }`}
                       >
-                        + {s}
+                        {isSelected ? `✓ ${s}` : `+ ${s}`}
                       </button>
-                    ))}
-                  </div>
-                )}
+                    );
+                  })}
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Mặt Hàng / Chủng Loại Vật Tư Nhập <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Mặt Hàng / Chủng Loại Vật Tư Nhập <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[11px] text-emerald-700 font-medium">Gợi ý mặt hàng</span>
+                </div>
                 <input
                   type="text"
                   required
                   value={importItemName}
                   onChange={e => setImportItemName(e.target.value)}
-                  placeholder="VD: Gỗ MDF 60x90 (30 tấm), 4 Can Mực In UV, 10 Tấm Mica Trong..."
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none"
+                  placeholder="Chọn nhanh gợi ý bên dưới hoặc tự nhập chi tiết..."
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition"
                 />
+
+                {/* Danh sách các thẻ chọn nhanh cố định cho Mặt Hàng / Chủng Loại Vật Tư */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                  {FIXED_IMPORT_ITEMS.map(item => {
+                    const isSelected = importItemName.trim().toLowerCase() === item.toLowerCase();
+                    return (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setImportItemName(item)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : 'bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-950 border-slate-200 active:scale-95'
+                        }`}
+                      >
+                        {isSelected ? `✓ ${item}` : `+ ${item}`}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Amount Inward */}
