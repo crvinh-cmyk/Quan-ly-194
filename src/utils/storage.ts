@@ -149,32 +149,11 @@ export function saveStoredMaterials(materials: Material[]): void {
 export function getStoredStockImports(): StockImportReceipt[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.STOCK_IMPORTS);
-    if (raw === null) {
-      localStorage.setItem(STORAGE_KEYS.STOCK_IMPORTS, JSON.stringify(DEFAULT_STOCK_IMPORTS));
-      return DEFAULT_STOCK_IMPORTS;
+    if (!raw) {
+      return [];
     }
-    let parsed: StockImportReceipt[] = JSON.parse(raw);
+    const parsed: StockImportReceipt[] = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-
-    let modified = false;
-    parsed = parsed.map(receipt => {
-      const validItems = receipt.items.filter(it => !isBannedMaterial({ id: it.materialId, code: it.materialCode, name: it.materialName }));
-      if (validItems.length !== receipt.items.length) {
-        modified = true;
-        const newTotal = validItems.reduce((s, it) => s + it.totalCost, 0);
-        return {
-          ...receipt,
-          items: validItems,
-          totalAmount: newTotal,
-          paid: Math.min(receipt.paid, newTotal)
-        };
-      }
-      return receipt;
-    }).filter(r => r.items.length > 0);
-
-    if (modified) {
-      localStorage.setItem(STORAGE_KEYS.STOCK_IMPORTS, JSON.stringify(parsed));
-    }
     return parsed;
   } catch (e) {
     console.error('Error loading stock imports from localStorage', e);

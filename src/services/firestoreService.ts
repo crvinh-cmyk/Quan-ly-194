@@ -5,36 +5,83 @@ import {
   deleteDoc,
   onSnapshot,
   getDocs,
-  writeBatch,
-  getDoc
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo } from '../types';
-import {
-  DEFAULT_PRODUCTS,
-  DEFAULT_CUSTOMERS,
-  DEFAULT_ORDERS,
-  DEFAULT_MATERIALS,
-  DEFAULT_STOCK_IMPORTS,
-  DEFAULT_WORKSHOP_INFO,
-  DEFAULT_COMBOS
-} from '../data/initialData';
-import {
-  getStoredProducts,
-  getStoredCustomers,
-  getStoredOrders,
-  getStoredMaterials,
-  getStoredStockImports,
-  getStoredWorkshopInfo,
-  getStoredCombos,
-  saveStoredProducts,
-  saveStoredCustomers,
-  saveStoredOrders,
-  saveStoredMaterials,
-  saveStoredStockImports,
-  saveStoredWorkshopInfo,
-  saveStoredCombos
-} from '../utils/storage';
+import { DEFAULT_WORKSHOP_INFO } from '../data/initialData';
+
+// User info interface for tagging created/updated records
+export interface AuthUserContext {
+  uid?: string;
+  email?: string | null;
+  displayName?: string | null;
+}
+
+/**
+ * Chuyển đổi an toàn các định dạng Ngày/Giờ từ Firestore Timestamp (hoặc string, Date, seconds)
+ * sang chuỗi ISO String chuẩn để ứng dụng không bao giờ bị crash
+ */
+export function normalizeFirestoreDate(val: any, fallback?: string): string {
+  if (!val) return fallback || new Date().toISOString();
+  if (typeof val === 'string') return val;
+  if (val instanceof Date) return val.toISOString();
+  // Firestore Timestamp instance có method toDate()
+  if (typeof val.toDate === 'function') {
+    try {
+      return val.toDate().toISOString();
+    } catch (_) {}
+  }
+  // Đối tượng Firestore Timestamp dạng { seconds: number, nanoseconds: number }
+  if (typeof val.seconds === 'number') {
+    return new Date(val.seconds * 1000).toISOString();
+  }
+  if (typeof val._seconds === 'number') {
+    return new Date(val._seconds * 1000).toISOString();
+  }
+  return fallback || new Date().toISOString();
+}
+
+/**
+ * Chuyển đổi an toàn trường ngày ngắn YYYY-MM-DD
+ */
+export function normalizeDateOnly(val: any, fallback?: string): string {
+  const iso = normalizeFirestoreDate(val, fallback);
+  return iso.slice(0, 10);
+}
+
+/**
+ * Loại bỏ các trường undefined trước khi ghi lên Firestore (tránh lỗi Unsupported field value: undefined)
+ */
+export function cleanFirestoreObject<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (Array.isArray(value)) {
+        result[key] = value.map(item =>
+          typeof item === 'object' && item !== null ? cleanFirestoreObject(item) : item
+        );
+      } else if (typeof value === 'object' && value !== null) {
+        result[key] = cleanFirestoreObject(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Gán thông tin userId / người tạo vào bản ghi
+ */
+function attachUserInfo<T extends Record<string, any>>(data: T, userContext?: AuthUserContext | null): T {
+  if (!userContext) return data;
+  return {
+    ...data,
+    userId: data.userId || userContext.uid,
+    createdBy: data.createdBy || userContext.email || userContext.displayName || undefined
+  };
+}
 
 // Tên các Collection trên Firestore
 export const COLLECTIONS = {
@@ -42,12 +89,14 @@ export const COLLECTIONS = {
   CUSTOMERS: 'customers',
   ORDERS: 'orders',
   MATERIALS: 'materials',
-  STOCK_IMPORTS: 'stock_imports',
+  PURCHASES: 'purchases',
   SETTINGS: 'settings',
   COMBOS: 'combos'
 } as const;
 
-// 1. WORKSHOP INFO
+// =================================================================
+// 1. WORKSHOP INFO (Cài đặt thông tin xưởng in 194)
+// =================================================================
 export function subscribeWorkshopInfo(
   onData: (info: WorkshopInfo) => void,
   onError?: (err: Error) => void
@@ -55,27 +104,44 @@ export function subscribeWorkshopInfo(
   const docRef = doc(db, COLLECTIONS.SETTINGS, 'workshop_info');
   return onSnapshot(docRef, { includeMetadataChanges: false }, (snapshot) => {
     if (snapshot.exists()) {
-      const data = snapshot.data() as WorkshopInfo;
-      saveStoredWorkshopInfo(data);
+      const raw = snapshot.data();
+      const data: WorkshopInfo = {
+        name: raw.name || DEFAULT_WORKSHOP_INFO.name,
+        subtitle: raw.subtitle || DEFAULT_WORKSHOP_INFO.subtitle,
+        phone: raw.phone || DEFAULT_WORKSHOP_INFO.phone,
+        hotline: raw.hotline || DEFAULT_WORKSHOP_INFO.hotline,
+        address: raw.address || DEFAULT_WORKSHOP_INFO.address,
+        zalo: raw.zalo || DEFAULT_WORKSHOP_INFO.zalo,
+        bankAccount: raw.bankAccount || DEFAULT_WORKSHOP_INFO.bankAccount,
+        userId: raw.userId,
+        updatedAt: normalizeFirestoreDate(raw.updatedAt)
+      };
       onData(data);
     } else {
-      const initial = getStoredWorkshopInfo() || DEFAULT_WORKSHOP_INFO;
-      saveWorkshopInfoToFirestore(initial).catch(console.error);
-      onData(initial);
+      // Dữ liệu mặc định hiển thị tạm thời khi chưa cấu hình trên Cloud
+      onData(DEFAULT_WORKSHOP_INFO);
     }
   }, (error) => {
-    console.error('Firestore workshop_info real-time sync error:', error);
+    console.error('Firestore workshop_info onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-export async function saveWorkshopInfoToFirestore(info: WorkshopInfo): Promise<void> {
-  saveStoredWorkshopInfo(info);
+export async function saveWorkshopInfoToFirestore(
+  info: WorkshopInfo,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.SETTINGS, 'workshop_info');
-  await setDoc(docRef, info);
+  const enriched = attachUserInfo({
+    ...info,
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
-// 2. PRODUCTS
+// =================================================================
+// 2. PRODUCTS (Danh mục Bảng giá & Sản phẩm in)
+// =================================================================
 export function subscribeProducts(
   onData: (products: Product[]) => void,
   onError?: (err: Error) => void
@@ -84,44 +150,54 @@ export function subscribeProducts(
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Product[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as Product);
+      const raw = docSnap.data();
+      const product: Product = {
+        id: docSnap.id,
+        code: raw.code || '',
+        name: raw.name || '',
+        size: raw.size || '',
+        price: Number(raw.price) || 0,
+        costPrice: raw.costPrice !== undefined ? Number(raw.costPrice) : undefined,
+        category: raw.category || 'GIÁ STUDIO',
+        unit: raw.unit || 'cái',
+        description: raw.description,
+        recipe: raw.recipe,
+        userId: raw.userId,
+        createdBy: raw.createdBy,
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        updatedAt: normalizeFirestoreDate(raw.updatedAt)
+      };
+      list.push(product);
     });
 
-    saveStoredProducts(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore products real-time sync error:', error);
+    console.error('Firestore products onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-/**
- * Lưu hoặc cập nhật 1 sản phẩm trực tiếp lên Firestore
- */
-export async function saveProductToFirestore(product: Product): Promise<void> {
+export async function saveProductToFirestore(
+  product: Product,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.PRODUCTS, product.id);
-  await setDoc(docRef, product, { merge: true });
+  const enriched = attachUserInfo({
+    ...product,
+    createdAt: normalizeFirestoreDate(product.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
-/**
- * Xóa 1 sản phẩm trực tiếp từ Firestore
- */
 export async function deleteProductFromFirestore(productId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.PRODUCTS, productId);
   await deleteDoc(docRef);
 }
 
-export async function syncAllProductsToFirestore(products: Product[]): Promise<void> {
-  saveStoredProducts(products);
-  const batch = writeBatch(db);
-  products.forEach(p => {
-    const ref = doc(db, COLLECTIONS.PRODUCTS, p.id);
-    batch.set(ref, p, { merge: true });
-  });
-  await batch.commit();
-}
-
-// 3. CUSTOMERS
+// =================================================================
+// 3. CUSTOMERS (Khách hàng & Studio chụp ảnh)
+// =================================================================
 export function subscribeCustomers(
   onData: (customers: Customer[]) => void,
   onError?: (err: Error) => void
@@ -130,20 +206,43 @@ export function subscribeCustomers(
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Customer[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as Customer);
+      const raw = docSnap.data();
+      const customer: Customer = {
+        id: docSnap.id,
+        name: raw.name || '',
+        phone: raw.phone || '',
+        studioName: raw.studioName,
+        address: raw.address,
+        initialDebt: Number(raw.initialDebt) || 0,
+        customerType: raw.customerType || 'GIÁ STUDIO',
+        notes: raw.notes,
+        yearlyRevenue: Number(raw.yearlyRevenue) || 0,
+        initialYearlyRevenue: raw.initialYearlyRevenue ? Number(raw.initialYearlyRevenue) : undefined,
+        initialYearlyRevenues: raw.initialYearlyRevenues,
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(customer);
     });
 
-    saveStoredCustomers(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore customers real-time sync error:', error);
+    console.error('Firestore customers onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-export async function saveCustomerToFirestore(customer: Customer): Promise<void> {
+export async function saveCustomerToFirestore(
+  customer: Customer,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.CUSTOMERS, customer.id);
-  await setDoc(docRef, customer);
+  const enriched = attachUserInfo({
+    ...customer,
+    createdAt: normalizeFirestoreDate(customer.createdAt)
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
 export async function deleteCustomerFromFirestore(customerId: string): Promise<void> {
@@ -151,17 +250,9 @@ export async function deleteCustomerFromFirestore(customerId: string): Promise<v
   await deleteDoc(docRef);
 }
 
-export async function syncAllCustomersToFirestore(customers: Customer[]): Promise<void> {
-  saveStoredCustomers(customers);
-  const batch = writeBatch(db);
-  customers.forEach(c => {
-    const ref = doc(db, COLLECTIONS.CUSTOMERS, c.id);
-    batch.set(ref, c);
-  });
-  await batch.commit();
-}
-
-// 4. ORDERS
+// =================================================================
+// 4. ORDERS (Đơn hàng & Hóa đơn bán hàng)
+// =================================================================
 export function subscribeOrders(
   onData: (orders: Order[]) => void,
   onError?: (err: Error) => void
@@ -170,27 +261,61 @@ export function subscribeOrders(
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Order[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as Order);
+      const raw = docSnap.data();
+      const order: Order = {
+        id: docSnap.id,
+        orderNumber: raw.orderNumber || '',
+        date: normalizeDateOnly(raw.date),
+        customerId: raw.customerId || '',
+        customerName: raw.customerName || '',
+        customerPhone: raw.customerPhone || '',
+        customerAddress: raw.customerAddress,
+        items: Array.isArray(raw.items) ? raw.items.map((it: any) => ({
+          ...it,
+          date: normalizeDateOnly(it.date)
+        })) : [],
+        subtotal: Number(raw.subtotal) || 0,
+        discount: Number(raw.discount) || 0,
+        previousDebt: Number(raw.previousDebt) || 0,
+        paid: Number(raw.paid) || 0,
+        totalDue: Number(raw.totalDue) || 0,
+        status: raw.status || 'pending',
+        materialsDeducted: raw.materialsDeducted,
+        notes: raw.notes,
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        updatedAt: normalizeFirestoreDate(raw.updatedAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(order);
     });
 
-    // Sắp xếp đơn mới nhất lên đầu
+    // Sắp xếp đơn mới nhất lên đầu (theo createdAt hoặc date)
     list.sort((a, b) => {
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : new Date(b.date).getTime();
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : new Date(a.date).getTime();
+      const timeB = new Date(b.createdAt || b.date).getTime();
+      const timeA = new Date(a.createdAt || a.date).getTime();
       return timeB - timeA;
     });
 
-    saveStoredOrders(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore orders real-time sync error:', error);
+    console.error('Firestore orders onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-export async function saveOrderToFirestore(order: Order): Promise<void> {
+export async function saveOrderToFirestore(
+  order: Order,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.ORDERS, order.id);
-  await setDoc(docRef, order);
+  const enriched = attachUserInfo({
+    ...order,
+    date: normalizeDateOnly(order.date),
+    createdAt: normalizeFirestoreDate(order.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
 export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
@@ -198,17 +323,9 @@ export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
   await deleteDoc(docRef);
 }
 
-export async function syncAllOrdersToFirestore(orders: Order[]): Promise<void> {
-  saveStoredOrders(orders);
-  const batch = writeBatch(db);
-  orders.forEach(o => {
-    const ref = doc(db, COLLECTIONS.ORDERS, o.id);
-    batch.set(ref, o);
-  });
-  await batch.commit();
-}
-
-// 5. MATERIALS (Kho vật tư)
+// =================================================================
+// 5. MATERIALS (Kho vật tư nhập liệu & Tồn kho)
+// =================================================================
 export function subscribeMaterials(
   onData: (materials: Material[]) => void,
   onError?: (err: Error) => void
@@ -217,86 +334,124 @@ export function subscribeMaterials(
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: Material[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as Material);
+      const raw = docSnap.data();
+      const material: Material = {
+        id: docSnap.id,
+        code: raw.code || '',
+        name: raw.name || '',
+        category: raw.category || 'Gỗ MDF',
+        unit: raw.unit || 'Tấm',
+        costPrice: Number(raw.costPrice) || 0,
+        stockQuantity: Number(raw.stockQuantity) || 0,
+        minStockAlert: Number(raw.minStockAlert) || 5,
+        supplier: raw.supplier,
+        notes: raw.notes,
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        updatedAt: normalizeFirestoreDate(raw.updatedAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(material);
     });
 
-    saveStoredMaterials(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore materials real-time sync error:', error);
+    console.error('Firestore materials onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-/**
- * Lưu hoặc cập nhật 1 vật tư trực tiếp lên Firestore
- */
-export async function saveMaterialToFirestore(material: Material): Promise<void> {
+export async function saveMaterialToFirestore(
+  material: Material,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.MATERIALS, material.id);
-  await setDoc(docRef, material, { merge: true });
+  const enriched = attachUserInfo({
+    ...material,
+    createdAt: normalizeFirestoreDate(material.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
-/**
- * Xóa 1 vật tư trực tiếp từ Firestore
- */
 export async function deleteMaterialFromFirestore(materialId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.MATERIALS, materialId);
   await deleteDoc(docRef);
 }
 
-export async function syncAllMaterialsToFirestore(materials: Material[]): Promise<void> {
-  saveStoredMaterials(materials);
-  const batch = writeBatch(db);
-  materials.forEach(m => {
-    const ref = doc(db, COLLECTIONS.MATERIALS, m.id);
-    batch.set(ref, m, { merge: true });
-  });
-  await batch.commit();
-}
-
-// 6. STOCK IMPORTS (Phiếu nhập kho)
-export function subscribeStockImports(
+// =================================================================
+// 6. PURCHASES (Hóa đơn nhập kho / Nhập vật tư theo nhà cung cấp)
+// =================================================================
+export function subscribePurchases(
   onData: (imports: StockImportReceipt[]) => void,
   onError?: (err: Error) => void
 ) {
-  const colRef = collection(db, COLLECTIONS.STOCK_IMPORTS);
+  const colRef = collection(db, COLLECTIONS.PURCHASES);
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: StockImportReceipt[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as StockImportReceipt);
+      const raw = docSnap.data();
+      const receipt: StockImportReceipt = {
+        id: docSnap.id,
+        receiptNumber: raw.receiptNumber || '',
+        date: normalizeDateOnly(raw.date),
+        supplier: raw.supplier || '',
+        items: Array.isArray(raw.items) ? raw.items : [],
+        totalAmount: Number(raw.totalAmount) || 0,
+        paid: Number(raw.paid) || 0,
+        notes: raw.notes || '',
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(receipt);
     });
 
+    // Sắp xếp ngày nhập mới nhất lên đầu
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    saveStoredStockImports(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore stock_imports real-time sync error:', error);
+    console.error('Firestore purchases onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-export async function saveStockImportToFirestore(receipt: StockImportReceipt): Promise<void> {
-  const docRef = doc(db, COLLECTIONS.STOCK_IMPORTS, receipt.id);
-  await setDoc(docRef, receipt);
+export const subscribeStockImports = subscribePurchases;
+
+export async function savePurchaseToFirestore(
+  receipt: StockImportReceipt,
+  user?: AuthUserContext | null
+): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.PURCHASES, receipt.id);
+  const enriched = attachUserInfo({
+    ...receipt,
+    date: normalizeDateOnly(receipt.date),
+    createdAt: normalizeFirestoreDate(receipt.createdAt)
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
-export async function deleteStockImportFromFirestore(receiptId: string): Promise<void> {
-  const docRef = doc(db, COLLECTIONS.STOCK_IMPORTS, receiptId);
+export const saveStockImportToFirestore = savePurchaseToFirestore;
+
+export async function deletePurchaseFromFirestore(receiptId: string): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.PURCHASES, receiptId);
   await deleteDoc(docRef);
 }
 
-export async function syncAllStockImportsToFirestore(imports: StockImportReceipt[]): Promise<void> {
-  saveStoredStockImports(imports);
+export const deleteStockImportFromFirestore = deletePurchaseFromFirestore;
+
+export async function clearAllPurchasesFromFirestore(): Promise<void> {
+  const snap = await getDocs(collection(db, COLLECTIONS.PURCHASES));
   const batch = writeBatch(db);
-  imports.forEach(imp => {
-    const ref = doc(db, COLLECTIONS.STOCK_IMPORTS, imp.id);
-    batch.set(ref, imp);
+  snap.forEach(d => {
+    batch.delete(d.ref);
   });
   await batch.commit();
 }
 
-// 7. STUDIO COMBOS (Gói sản phẩm theo Studio / Thường mua)
+// =================================================================
+// 7. COMBOS (Gói combo sản phẩm in)
+// =================================================================
 export function subscribeCombos(
   onData: (combos: StudioCombo[]) => void,
   onError?: (err: Error) => void
@@ -305,95 +460,43 @@ export function subscribeCombos(
   return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
     const list: StudioCombo[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data() as StudioCombo);
+      const raw = docSnap.data();
+      const combo: StudioCombo = {
+        id: docSnap.id,
+        name: raw.name || '',
+        studioName: raw.studioName,
+        customerId: raw.customerId,
+        description: raw.description,
+        items: Array.isArray(raw.items) ? raw.items : [],
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        updatedAt: normalizeFirestoreDate(raw.updatedAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(combo);
     });
 
-    saveStoredCombos(list);
     onData(list);
   }, (error) => {
-    console.error('Firestore combos real-time sync error:', error);
+    console.error('Firestore combos onSnapshot error:', error);
     if (onError) onError(error);
   });
 }
 
-export async function saveComboToFirestore(combo: StudioCombo): Promise<void> {
+export async function saveComboToFirestore(
+  combo: StudioCombo,
+  user?: AuthUserContext | null
+): Promise<void> {
   const docRef = doc(db, COLLECTIONS.COMBOS, combo.id);
-  await setDoc(docRef, combo);
+  const enriched = attachUserInfo({
+    ...combo,
+    createdAt: normalizeFirestoreDate(combo.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
 
 export async function deleteComboFromFirestore(comboId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.COMBOS, comboId);
   await deleteDoc(docRef);
-}
-
-export async function syncAllCombosToFirestore(combos: StudioCombo[]): Promise<void> {
-  saveStoredCombos(combos);
-  const batch = writeBatch(db);
-  combos.forEach(c => {
-    const ref = doc(db, COLLECTIONS.COMBOS, c.id);
-    batch.set(ref, c);
-  });
-  await batch.commit();
-}
-
-// =================================================================
-// INITIAL DATA SEED / MIGRATION (Chuyển toàn bộ dữ liệu hiện tại lên Cloud)
-// =================================================================
-export async function pushCurrentLocalDataToFirestore(): Promise<{
-  productsCount: number;
-  customersCount: number;
-  ordersCount: number;
-  materialsCount: number;
-  stockImportsCount: number;
-  combosCount: number;
-}> {
-  const workshop = getStoredWorkshopInfo() || DEFAULT_WORKSHOP_INFO;
-  const products = getStoredProducts().length > 0 ? getStoredProducts() : DEFAULT_PRODUCTS;
-  const customers = getStoredCustomers().length > 0 ? getStoredCustomers() : DEFAULT_CUSTOMERS;
-  const orders = getStoredOrders().length > 0 ? getStoredOrders() : DEFAULT_ORDERS;
-  const materials = getStoredMaterials().length > 0 ? getStoredMaterials() : DEFAULT_MATERIALS;
-  const stockImports = getStoredStockImports().length > 0 ? getStoredStockImports() : DEFAULT_STOCK_IMPORTS;
-  const combos = getStoredCombos().length > 0 ? getStoredCombos() : DEFAULT_COMBOS;
-
-  await saveWorkshopInfoToFirestore(workshop);
-  await syncAllProductsToFirestore(products);
-  await syncAllCustomersToFirestore(customers);
-  await syncAllOrdersToFirestore(orders);
-  await syncAllMaterialsToFirestore(materials);
-  await syncAllStockImportsToFirestore(stockImports);
-  await syncAllCombosToFirestore(combos);
-
-  return {
-    productsCount: products.length,
-    customersCount: customers.length,
-    ordersCount: orders.length,
-    materialsCount: materials.length,
-    stockImportsCount: stockImports.length,
-    combosCount: combos.length
-  };
-}
-
-// Kiểm tra xem Firestore đã có dữ liệu chưa, nếu hoàn toàn rỗng thì nạp an toàn dữ liệu mặc định ban đầu
-export async function initializeFirestoreIfEmpty(): Promise<boolean> {
-  try {
-    const productsSnap = await getDocs(collection(db, COLLECTIONS.PRODUCTS));
-    if (productsSnap.empty) {
-      console.log('Firestore rỗng, đang khởi tạo dữ liệu mặc định ban đầu...');
-      const batch = writeBatch(db);
-      DEFAULT_PRODUCTS.forEach(p => {
-        const ref = doc(db, COLLECTIONS.PRODUCTS, p.id);
-        batch.set(ref, p, { merge: true });
-      });
-      DEFAULT_MATERIALS.forEach(m => {
-        const ref = doc(db, COLLECTIONS.MATERIALS, m.id);
-        batch.set(ref, m, { merge: true });
-      });
-      await batch.commit();
-      return true;
-    }
-    return false;
-  } catch (e) {
-    console.error('Error checking Firestore initial state:', e);
-    return false;
-  }
 }

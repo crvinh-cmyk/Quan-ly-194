@@ -19,6 +19,10 @@ export interface Product {
   unit: string; // 'tấm', 'cái', 'cuốn', 'bộ'
   description?: string;
   recipe?: ProductRecipeItem[]; // Danh sách vật tư kho cấu thành tấm ảnh này
+  userId?: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Customer {
@@ -34,6 +38,8 @@ export interface Customer {
   yearlyRevenue?: number; // Tổng doanh thu từ 01/01 đến 31/12 hàng năm (cộng dồn sau mỗi hóa đơn)
   initialYearlyRevenue?: number; // Doanh thu ban đầu trước khi dùng phần mềm (cho năm hiện tại hoặc mặc định)
   initialYearlyRevenues?: Record<number, number>; // Doanh thu ban đầu theo từng năm { 2026: 25000000, 2025: ... }
+  userId?: string;
+  createdBy?: string;
 }
 
 export interface OrderItem {
@@ -78,6 +84,8 @@ export interface Order {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  userId?: string;
+  createdBy?: string;
 }
 
 export interface DebtPayment {
@@ -87,6 +95,7 @@ export interface DebtPayment {
   amount: number;
   paymentMethod: 'cash' | 'transfer';
   note?: string;
+  userId?: string;
 }
 
 export interface WorkshopInfo {
@@ -101,6 +110,8 @@ export interface WorkshopInfo {
     accountNumber: string;
     accountHolder: string;
   };
+  userId?: string;
+  updatedAt?: string;
 }
 
 export type MaterialCategory =
@@ -125,6 +136,8 @@ export interface Material {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  userId?: string;
+  createdBy?: string;
 }
 
 export interface StockImportItem {
@@ -148,6 +161,8 @@ export interface StockImportReceipt {
   paid: number; // Số tiền đã thanh toán cho nhà cung cấp
   notes?: string;
   createdAt: string;
+  userId?: string;
+  createdBy?: string;
 }
 
 export interface ComboItem {
@@ -169,5 +184,7 @@ export interface StudioCombo {
   items: ComboItem[];
   createdAt: string;
   updatedAt: string;
+  userId?: string;
+  createdBy?: string;
 }
 

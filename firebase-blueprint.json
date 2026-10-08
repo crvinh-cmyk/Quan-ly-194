@@ -125,6 +125,10 @@
       "schema": "Material",
       "description": "Collection of inventory materials"
     },
+    "/purchases/{purchaseId}": {
+      "schema": "StockImportReceipt",
+      "description": "Collection of warehouse purchase receipts and inventory invoices"
+    },
     "/stockImports/{receiptId}": {
       "schema": "StockImportReceipt",
       "description": "Collection of stock import receipts"

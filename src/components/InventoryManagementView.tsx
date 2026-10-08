@@ -365,8 +365,8 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
 
     // Create item record
     const singleItem: StockImportItem = {
-      id: `ii-${Date.now()}-0`,
-      materialId: `custom-mat-${Date.now()}`,
+      id: editingImportReceipt && editingImportReceipt.items[0] ? editingImportReceipt.items[0].id : `ii-${Date.now()}-0`,
+      materialId: editingImportReceipt && editingImportReceipt.items[0] ? editingImportReceipt.items[0].materialId : `custom-mat-${Date.now()}`,
       materialCode: 'VT-NHAP',
       materialName: importItemName.trim(),
       unit: importUnit.trim() || 'Lô',
@@ -383,7 +383,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
       items: [singleItem],
       totalAmount: importAmount,
       paid: importAmount,
-      notes: importNotes.trim() || undefined,
+      notes: importNotes.trim() || '',
       createdAt: editingImportReceipt ? editingImportReceipt.createdAt : new Date().toISOString()
     };
 
@@ -1309,8 +1309,17 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                               type="button"
                               onClick={() => setSelectedReceiptDetail(imp)}
                               className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+                              title="Xem chi tiết phiếu nhập"
                             >
                               Xem
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditImport(imp)}
+                              className="p-1 rounded-lg bg-slate-100 hover:bg-blue-100 text-blue-600 cursor-pointer transition"
+                              title="Chỉnh sửa phiếu nhập này"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
                             </button>
                             {onDeleteStockImport && (
                               <button
@@ -1842,7 +1851,7 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             <div>
               <h4 className="font-extrabold text-base text-slate-900">Xóa Đợt Nhập Hàng Này?</h4>
               <p className="text-xs text-slate-500 mt-1">
-                Bạn có chắc muốn xóa đợt nhập <strong className="text-slate-800">{receiptToDelete.receiptNumber}</strong> từ <strong className="text-slate-800">{receiptToDelete.supplier}</strong> (trị giá {formatCurrency(receiptToDelete.totalAmount)}) không?
+                Bạn có chắc muốn xóa đợt nhập <strong className="text-slate-800">{receiptToDelete.receiptNumber}</strong> từ <strong className="text-slate-800">{receiptToDelete.supplier}</strong> (trị giá {formatCurrency(receiptToDelete.totalAmount)}) khỏi Cloud Firestore không?
               </p>
             </div>
             <div className="flex items-center justify-center gap-2 pt-2">
@@ -1862,6 +1871,140 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                 className="px-4 py-2 text-xs font-black text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-md cursor-pointer"
               >
                 Xóa Phiếu Nhập
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5B: VIEW RECEIPT DETAIL */}
+      {selectedReceiptDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 sm:p-6 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base text-slate-900">Chi Tiết Phiếu Nhập Kho</h3>
+                  <p className="text-xs text-slate-500 font-mono">Mã: {selectedReceiptDetail.receiptNumber}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedReceiptDetail(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-slate-500 block">Nhà cung cấp:</span>
+                  <span className="font-bold text-slate-900 text-sm">{selectedReceiptDetail.supplier}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Ngày nhập:</span>
+                  <span className="font-bold text-slate-900 font-mono text-sm">{formatDateVN(selectedReceiptDetail.date)}</span>
+                </div>
+              </div>
+
+              {selectedReceiptDetail.notes && (
+                <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs">
+                  <span className="font-bold">Ghi chú:</span> {selectedReceiptDetail.notes}
+                </div>
+              )}
+
+              <div>
+                <h4 className="font-bold text-slate-800 mb-2 uppercase tracking-wider text-[11px]">Danh Sách Mặt Hàng</h4>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                        <th className="py-2 px-3">Tên Hàng</th>
+                        <th className="py-2 px-3 text-center">SL</th>
+                        <th className="py-2 px-3 text-right">Đơn Giá</th>
+                        <th className="py-2 px-3 text-right">Thành Tiền</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedReceiptDetail.items.map((it, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-semibold text-slate-900">{it.materialName}</td>
+                          <td className="py-2.5 px-3 text-center font-mono">{it.quantity} {it.unit}</td>
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-600">{formatCurrency(it.costPrice)}</td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">{formatCurrency(it.totalCost)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950">
+                <span className="font-black text-xs uppercase">Tổng Giá Trị Đợt Nhập:</span>
+                <span className="font-black text-base font-mono text-emerald-700">{formatCurrency(selectedReceiptDetail.totalAmount)}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  const receipt = selectedReceiptDetail;
+                  setSelectedReceiptDetail(null);
+                  handleOpenEditImport(receipt);
+                }}
+                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer"
+              >
+                <Edit className="w-3.5 h-3.5" />
+                <span>Chỉnh Sửa Phiếu</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedReceiptDetail(null)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5C: CLEAR ALL STOCK IMPORTS CONFIRMATION */}
+      {isClearStockImportsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5 border border-slate-200 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-base text-slate-900">Xóa Hết Lịch Sử Phiếu Nhập?</h4>
+              <p className="text-xs text-slate-500 mt-1">
+                Bạn có chắc chắn muốn xóa toàn bộ ({stockImports.length}) hóa đơn nhập kho trực tiếp trên Cloud Firestore không? Thao tác này không thể hoàn tác.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsClearStockImportsModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+              >
+                Hủy Bỏ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onClearAllStockImports) onClearAllStockImports();
+                  setIsClearStockImportsModalOpen(false);
+                }}
+                className="px-4 py-2 text-xs font-black text-white bg-rose-600 hover:bg-rose-500 rounded-xl shadow-md cursor-pointer"
+              >
+                Xác Nhận Xóa Hết
               </button>
             </div>
           </div>

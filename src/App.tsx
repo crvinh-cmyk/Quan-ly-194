@@ -1,28 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Product, Customer, Order, OrderStatus, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from './types';
+import { calculateCustomerDebt } from './utils/storage';
 import {
-  getStoredProducts, saveStoredProducts,
-  getStoredCustomers, saveStoredCustomers,
-  getStoredOrders, saveStoredOrders,
-  getStoredWorkshopInfo, saveStoredWorkshopInfo,
-  getStoredMaterials, saveStoredMaterials,
-  getStoredStockImports, saveStoredStockImports,
-  getStoredCombos, saveStoredCombos,
-  clearAllInventoryData, resetInventoryStockToZero, reloadDefaultMaterials, clearAllStockImportsOnly,
-  calculateCustomerDebt
-} from './utils/storage';
-import {
-  subscribeProducts, saveProductToFirestore, deleteProductFromFirestore, syncAllProductsToFirestore,
-  subscribeCustomers, saveCustomerToFirestore, deleteCustomerFromFirestore, syncAllCustomersToFirestore,
-  subscribeOrders, saveOrderToFirestore, deleteOrderFromFirestore, syncAllOrdersToFirestore,
-  subscribeMaterials, saveMaterialToFirestore, deleteMaterialFromFirestore, syncAllMaterialsToFirestore,
-  subscribeStockImports, saveStockImportToFirestore, deleteStockImportFromFirestore, syncAllStockImportsToFirestore,
-  subscribeCombos, saveComboToFirestore, deleteComboFromFirestore, syncAllCombosToFirestore,
+  subscribeProducts, saveProductToFirestore, deleteProductFromFirestore,
+  subscribeCustomers, saveCustomerToFirestore, deleteCustomerFromFirestore,
+  subscribeOrders, saveOrderToFirestore, deleteOrderFromFirestore,
+  subscribeMaterials, saveMaterialToFirestore, deleteMaterialFromFirestore,
+  subscribeStockImports, saveStockImportToFirestore, deleteStockImportFromFirestore, clearAllPurchasesFromFirestore,
+  subscribeCombos, saveComboToFirestore, deleteComboFromFirestore,
   subscribeWorkshopInfo, saveWorkshopInfoToFirestore,
-  initializeFirestoreIfEmpty, pushCurrentLocalDataToFirestore
+  AuthUserContext
 } from './services/firestoreService';
 import { subscribeAuthState, logoutUser } from './services/authService';
 import { User } from 'firebase/auth';
+import { DEFAULT_WORKSHOP_INFO, DEFAULT_MATERIALS } from './data/initialData';
 import { Header, ActiveTab } from './components/Header';
 import { SalesInvoiceForm } from './components/SalesInvoiceForm';
 import { OrderList } from './components/OrderList';
@@ -34,7 +25,6 @@ import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DataManagementModal } from './components/DataManagementModal';
 import { LoginView } from './components/LoginView';
-import { DEFAULT_PRODUCTS } from './data/initialData';
 
 const STORAGE_TAB_KEY = 'xuongin194_active_tab';
 
@@ -62,14 +52,17 @@ const getInitialTab = (): ActiveTab => {
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [dataLoading, setDataLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>(getInitialTab);
+
+  // Real-time Cloud Firestore state (100% cloud-native, no LocalStorage)
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [stockImports, setStockImports] = useState<StockImportReceipt[]>([]);
   const [combos, setCombos] = useState<StudioCombo[]>([]);
-  const [workshop, setWorkshop] = useState<WorkshopInfo>(getStoredWorkshopInfo());
+  const [workshop, setWorkshop] = useState<WorkshopInfo>(DEFAULT_WORKSHOP_INFO);
   const [firestoreStatus, setFirestoreStatus] = useState<'connected' | 'syncing' | 'offline'>('syncing');
 
   // Print modal state
@@ -82,6 +75,16 @@ export default function App() {
   // Trigger to reset POS form to a brand new clean order
   const [newOrderTrigger, setNewOrderTrigger] = useState<number>(0);
 
+  // User context object to tag record creators/editors
+  const userContext = useMemo<AuthUserContext | null>(() => {
+    if (!currentUser) return null;
+    return {
+      uid: currentUser.uid,
+      email: currentUser.email,
+      displayName: currentUser.displayName
+    };
+  }, [currentUser]);
+
   // 0. Listen to Firebase Authentication State
   useEffect(() => {
     const unsubscribeAuth = subscribeAuthState((user) => {
@@ -91,7 +94,7 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // Function to switch tab and immediately persist to storage
+  // Function to switch tab and persist UI tab preference
   const handleSelectTab = (tab: ActiveTab) => {
     setActiveTab(tab);
     try {
@@ -102,7 +105,6 @@ export default function App() {
     }
   };
 
-  // Sync activeTab to storage whenever it changes
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_TAB_KEY, activeTab);
@@ -112,83 +114,89 @@ export default function App() {
     }
   }, [activeTab]);
 
-  // Handler to create new order immediately
   const handleTriggerNewOrder = () => {
     handleSelectTab('pos');
     setNewOrderTrigger(Date.now());
   };
 
-  // Handler for user logout
   const handleLogout = async () => {
     try {
       await logoutUser();
       setCurrentUser(null);
+      setProducts([]);
+      setCustomers([]);
+      setOrders([]);
+      setMaterials([]);
+      setStockImports([]);
+      setCombos([]);
     } catch (e) {
       console.error('Error during logout:', e);
     }
   };
 
-  // 1. Initial local load for instant UI render
+  // 1. Real-time Firebase Cloud Firestore Synchronizer (onSnapshot 100%)
   useEffect(() => {
-    if (!currentUser) return;
-    setProducts(getStoredProducts());
-    setCustomers(getStoredCustomers());
-    setOrders(getStoredOrders());
-    setWorkshop(getStoredWorkshopInfo());
-    setMaterials(getStoredMaterials());
-    setStockImports(getStoredStockImports());
-    setCombos(getStoredCombos());
-  }, [currentUser]);
+    if (!currentUser) {
+      setDataLoading(false);
+      return;
+    }
 
-  // 2. Real-time Firebase Cloud Firestore Synchronizer (Active when logged in)
-  useEffect(() => {
-    if (!currentUser) return;
+    setDataLoading(true);
+    setFirestoreStatus('syncing');
 
-    // Check & seed if Firestore is brand new/empty
-    initializeFirestoreIfEmpty().then(() => {
+    let loadedCount = 0;
+    const markLoaded = () => {
+      loadedCount++;
+      // Once critical collections have responded, hide initial loading screen
+      if (loadedCount >= 3) {
+        setDataLoading(false);
+        setFirestoreStatus('connected');
+      }
+    };
+
+    // Safety timer so network latency never locks the UI permanently
+    const safetyTimer = setTimeout(() => {
+      setDataLoading(false);
       setFirestoreStatus('connected');
-    }).catch(err => {
-      console.error('Firestore init error:', err);
-      setFirestoreStatus('connected');
-    });
+    }, 2000);
 
-    // Real-time snapshot listeners across all connected devices
     const unsubWorkshop = subscribeWorkshopInfo((data) => {
       setWorkshop(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubProducts = subscribeProducts((data) => {
       setProducts(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubCustomers = subscribeCustomers((data) => {
       setCustomers(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubOrders = subscribeOrders((data) => {
       setOrders(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubMaterials = subscribeMaterials((data) => {
       setMaterials(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubStockImports = subscribeStockImports((data) => {
       setStockImports(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     const unsubCombos = subscribeCombos((data) => {
       setCombos(data);
-      setFirestoreStatus('connected');
+      markLoaded();
     });
 
     return () => {
+      clearTimeout(safetyTimer);
       unsubWorkshop();
       unsubProducts();
       unsubCustomers();
@@ -199,88 +207,47 @@ export default function App() {
     };
   }, [currentUser]);
 
-  // Reload all data manually (fallback)
-  const loadAllData = () => {
-    setProducts(getStoredProducts());
-    setCustomers(getStoredCustomers());
-    setOrders(getStoredOrders());
-    setWorkshop(getStoredWorkshopInfo());
-    setMaterials(getStoredMaterials());
-    setStockImports(getStoredStockImports());
-    setCombos(getStoredCombos());
-  };
-
-  // Combo CRUD handlers
+  // Combo CRUD handlers (Direct Firestore)
   const handleSaveCombo = (combo: StudioCombo) => {
-    const exists = combos.some(c => c.id === combo.id);
-    const updated = exists
-      ? combos.map(c => (c.id === combo.id ? combo : c))
-      : [combo, ...combos];
-    setCombos(updated);
-    saveStoredCombos(updated);
-    saveComboToFirestore(combo).catch(console.error);
+    saveComboToFirestore(combo, userContext).catch(console.error);
   };
 
   const handleDeleteCombo = (comboId: string) => {
-    const updated = combos.filter(c => c.id !== comboId);
-    setCombos(updated);
-    saveStoredCombos(updated);
     deleteComboFromFirestore(comboId).catch(console.error);
   };
 
-  // Material CRUD handlers (Firestore + Local fallback)
+  // Material CRUD handlers (Direct Firestore)
   const handleSaveMaterial = (material: Material) => {
-    const exists = materials.some(m => m.id === material.id);
-    const updated = exists
-      ? materials.map(m => (m.id === material.id ? material : m))
-      : [material, ...materials];
-    setMaterials(updated);
-    saveStoredMaterials(updated);
-    saveMaterialToFirestore(material).catch(console.error);
+    saveMaterialToFirestore(material, userContext).catch(console.error);
   };
 
   const handleDeleteMaterial = (materialId: string) => {
-    const updated = materials.filter(m => m.id !== materialId);
-    setMaterials(updated);
-    saveStoredMaterials(updated);
     deleteMaterialFromFirestore(materialId).catch(console.error);
   };
 
-  // Stock Inward handler: saves receipt AND increases stockQuantity of materials
+  // Stock Inward / Purchase handler: lưu TRỰC TIẾP lên collection 'purchases' trên Firestore
   const handleSaveStockImport = (receipt: StockImportReceipt) => {
-    const updatedImports = [receipt, ...stockImports];
-    setStockImports(updatedImports);
-    saveStoredStockImports(updatedImports);
-    saveStockImportToFirestore(receipt).catch(console.error);
+    saveStockImportToFirestore(receipt, userContext).catch(console.error);
 
-    // Increase stock quantity & update latest cost price
-    const updatedMaterials = materials.map(mat => {
+    // Tự động tăng số lượng tồn kho vật tư nếu phiếu có gắn mã vật tư tương ứng
+    materials.forEach(mat => {
       const importedItem = receipt.items.find(it => it.materialId === mat.id);
       if (importedItem) {
         const updatedMat: Material = {
           ...mat,
           stockQuantity: mat.stockQuantity + importedItem.quantity,
-          costPrice: importedItem.costPrice > 0 ? importedItem.costPrice : mat.costPrice,
           updatedAt: new Date().toISOString()
         };
-        saveMaterialToFirestore(updatedMat).catch(console.error);
-        return updatedMat;
+        saveMaterialToFirestore(updatedMat, userContext).catch(console.error);
       }
-      return mat;
     });
-
-    setMaterials(updatedMaterials);
-    saveStoredMaterials(updatedMaterials);
   };
 
   const handleDeleteStockImport = (receiptId: string) => {
-    const updated = stockImports.filter(imp => imp.id !== receiptId);
-    setStockImports(updated);
-    saveStoredStockImports(updated);
     deleteStockImportFromFirestore(receiptId).catch(console.error);
   };
 
-  // Stock adjustment / use
+  // Stock adjustment / use (Lưu trực tiếp Firestore)
   const handleAdjustStock = (materialId: string, newQuantity: number) => {
     const target = materials.find(m => m.id === materialId);
     if (!target) return;
@@ -289,59 +256,46 @@ export default function App() {
       stockQuantity: newQuantity,
       updatedAt: new Date().toISOString()
     };
-    const updatedMaterials = materials.map(mat => mat.id === materialId ? updatedMat : mat);
-
-    setMaterials(updatedMaterials);
-    saveStoredMaterials(updatedMaterials);
-    saveMaterialToFirestore(updatedMat).catch(console.error);
+    saveMaterialToFirestore(updatedMat, userContext).catch(console.error);
   };
 
-  // Inventory clearing & resetting handlers
+  // Inventory clearing & resetting handlers (Direct Firestore)
   const handleClearAllInventory = () => {
-    clearAllInventoryData();
-    setMaterials([]);
-    setStockImports([]);
-    syncAllMaterialsToFirestore([]).catch(console.error);
-    syncAllStockImportsToFirestore([]).catch(console.error);
+    materials.forEach(m => {
+      deleteMaterialFromFirestore(m.id).catch(console.error);
+    });
+    clearAllPurchasesFromFirestore().catch(console.error);
   };
 
   const handleResetStockToZero = () => {
-    resetInventoryStockToZero();
-    const zeroMaterials = getStoredMaterials();
-    setMaterials(zeroMaterials);
-    setStockImports([]);
-    syncAllMaterialsToFirestore(zeroMaterials).catch(console.error);
-    syncAllStockImportsToFirestore([]).catch(console.error);
+    materials.forEach(mat => {
+      saveMaterialToFirestore({
+        ...mat,
+        stockQuantity: 0,
+        updatedAt: new Date().toISOString()
+      }, userContext).catch(console.error);
+    });
   };
 
   const handleReloadDefaultMaterials = () => {
-    reloadDefaultMaterials();
-    const reloadedMats = getStoredMaterials();
-    const reloadedImports = getStoredStockImports();
-    setMaterials(reloadedMats);
-    setStockImports(reloadedImports);
-    syncAllMaterialsToFirestore(reloadedMats).catch(console.error);
-    syncAllStockImportsToFirestore(reloadedImports).catch(console.error);
+    DEFAULT_MATERIALS.forEach(mat => {
+      saveMaterialToFirestore(mat, userContext).catch(console.error);
+    });
   };
 
   const handleClearAllStockImports = () => {
-    clearAllStockImportsOnly();
-    setStockImports([]);
-    syncAllStockImportsToFirestore([]).catch(console.error);
+    clearAllPurchasesFromFirestore().catch(console.error);
   };
 
   const lowStockCount = useMemo(() => {
     return materials.filter(m => m.stockQuantity > 0 && m.stockQuantity <= m.minStockAlert).length;
   }, [materials]);
 
-  // Save order handler
+  // Save order handler (Direct Firestore)
   const handleSaveOrder = (newOrder: Order, openPrint: boolean) => {
-    const updatedOrders = [newOrder, ...orders.filter(o => o.id !== newOrder.id)];
-    setOrders(updatedOrders);
-    saveStoredOrders(updatedOrders);
-    saveOrderToFirestore(newOrder).catch(console.error);
+    saveOrderToFirestore(newOrder, userContext).catch(console.error);
 
-    // If customer doesn't exist, create customer
+    // If customer doesn't exist, create customer directly on Cloud
     const existingCust = customers.find(c => c.id === newOrder.customerId);
     if (!existingCust && newOrder.customerName) {
       const newCust: Customer = {
@@ -352,19 +306,13 @@ export default function App() {
         initialDebt: 0,
         createdAt: new Date().toISOString()
       };
-      const updatedCustomers = [...customers, newCust];
-      setCustomers(updatedCustomers);
-      saveStoredCustomers(updatedCustomers);
-      saveCustomerToFirestore(newCust).catch(console.error);
+      saveCustomerToFirestore(newCust, userContext).catch(console.error);
     }
 
     // Auto-deduct materials from warehouse inventory if specified on order
-    let currentMaterials = [...materials];
-
-    // If updating an existing order, restore any previous deductions first to prevent double counting
     const existingOrder = orders.find(o => o.id === newOrder.id);
     if (existingOrder && existingOrder.materialsDeducted && existingOrder.materialsDeducted.length > 0) {
-      currentMaterials = currentMaterials.map(mat => {
+      materials.forEach(mat => {
         const prevSum = existingOrder.materialsDeducted
           ?.filter(d => d.materialId === mat.id)
           .reduce((sum, d) => sum + d.quantity, 0) || 0;
@@ -374,15 +322,13 @@ export default function App() {
             stockQuantity: Math.round((mat.stockQuantity + prevSum) * 100) / 100,
             updatedAt: new Date().toISOString()
           };
-          saveMaterialToFirestore(restoredMat).catch(console.error);
-          return restoredMat;
+          saveMaterialToFirestore(restoredMat, userContext).catch(console.error);
         }
-        return mat;
       });
     }
 
     if (newOrder.materialsDeducted && newOrder.materialsDeducted.length > 0) {
-      currentMaterials = currentMaterials.map(mat => {
+      materials.forEach(mat => {
         const totalDeduction = newOrder.materialsDeducted
           ?.filter(d => d.materialId === mat.id)
           .reduce((sum, d) => sum + d.quantity, 0) || 0;
@@ -392,13 +338,9 @@ export default function App() {
             stockQuantity: Math.round(Math.max(0, mat.stockQuantity - totalDeduction) * 100) / 100,
             updatedAt: new Date().toISOString()
           };
-          saveMaterialToFirestore(deductedMat).catch(console.error);
-          return deductedMat;
+          saveMaterialToFirestore(deductedMat, userContext).catch(console.error);
         }
-        return mat;
       });
-      setMaterials(currentMaterials);
-      saveStoredMaterials(currentMaterials);
     }
 
     if (openPrint) {
@@ -406,28 +348,24 @@ export default function App() {
     }
   };
 
-  // Add customer
+  // Customer handlers (Direct Firestore)
   const handleAddCustomer = (customer: Customer) => {
-    const updated = [customer, ...customers];
-    setCustomers(updated);
-    saveStoredCustomers(updated);
-    saveCustomerToFirestore(customer).catch(console.error);
+    saveCustomerToFirestore(customer, userContext).catch(console.error);
   };
 
-  // Update customer
   const handleUpdateCustomer = (customer: Customer) => {
-    const updated = customers.map(c => (c.id === customer.id ? customer : c));
-    setCustomers(updated);
-    saveStoredCustomers(updated);
-    saveCustomerToFirestore(customer).catch(console.error);
+    saveCustomerToFirestore(customer, userContext).catch(console.error);
   };
 
-  // Record debt payment from customer
+  const handleDeleteCustomer = (customerId: string) => {
+    deleteCustomerFromFirestore(customerId).catch(console.error);
+  };
+
+  // Record debt payment from customer (Direct Firestore)
   const handleRecordDebtPayment = (customerId: string, amount: number, note: string) => {
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return;
 
-    // Create a payment order/receipt adjustment
     const curDebt = calculateCustomerDebt(customerId, orders, customers);
     const paymentOrder: Order = {
       id: `pay-${Date.now()}`,
@@ -461,50 +399,33 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
-    const updated = [paymentOrder, ...orders];
-    setOrders(updated);
-    saveStoredOrders(updated);
-    saveOrderToFirestore(paymentOrder).catch(console.error);
+    saveOrderToFirestore(paymentOrder, userContext).catch(console.error);
   };
 
-  // Add product
+  // Product handlers (Direct Firestore)
   const handleAddProduct = (product: Product) => {
-    const updated = [product, ...products];
-    setProducts(updated);
-    saveStoredProducts(updated);
-    saveProductToFirestore(product).catch(console.error);
+    saveProductToFirestore(product, userContext).catch(console.error);
   };
 
-  // Update product
   const handleUpdateProduct = (product: Product) => {
-    const updated = products.map(p => (p.id === product.id ? product : p));
-    setProducts(updated);
-    saveStoredProducts(updated);
-    saveProductToFirestore(product).catch(console.error);
+    saveProductToFirestore(product, userContext).catch(console.error);
   };
 
-  // Delete product
   const handleDeleteProduct = (productId: string) => {
-    const updated = products.filter(p => p.id !== productId);
-    setProducts(updated);
-    saveStoredProducts(updated);
     deleteProductFromFirestore(productId).catch(console.error);
   };
 
-  // Batch save / sync products
   const handleBatchSaveProducts = (newProducts: Product[]) => {
-    setProducts(newProducts);
-    saveStoredProducts(newProducts);
     newProducts.forEach(p => {
-      saveProductToFirestore(p).catch(console.error);
+      saveProductToFirestore(p, userContext).catch(console.error);
     });
   };
 
-  // Delete order (and automatically restore any deducted inventory materials back to stock!)
+  // Delete order (and automatically restore any deducted inventory materials back to stock on Firestore)
   const handleDeleteOrder = (orderId: string) => {
     const orderToDelete = orders.find(o => o.id === orderId);
     if (orderToDelete && orderToDelete.materialsDeducted && orderToDelete.materialsDeducted.length > 0) {
-      const updatedMaterials = materials.map(mat => {
+      materials.forEach(mat => {
         const totalDeduction = orderToDelete.materialsDeducted
           ?.filter(d => d.materialId === mat.id)
           .reduce((sum, d) => sum + d.quantity, 0) || 0;
@@ -514,62 +435,48 @@ export default function App() {
             stockQuantity: Math.round((mat.stockQuantity + totalDeduction) * 100) / 100,
             updatedAt: new Date().toISOString()
           };
-          saveMaterialToFirestore(restoredMat).catch(console.error);
-          return restoredMat;
+          saveMaterialToFirestore(restoredMat, userContext).catch(console.error);
         }
-        return mat;
       });
-      setMaterials(updatedMaterials);
-      saveStoredMaterials(updatedMaterials);
     }
 
-    const updated = orders.filter(o => o.id !== orderId);
-    setOrders(updated);
-    saveStoredOrders(updated);
     deleteOrderFromFirestore(orderId).catch(console.error);
   };
 
-  // Reset all sales orders and customer baseline data for a specific year (đặt lại dữ liệu năm mới)
+  // Reset all sales orders and customer baseline data for a specific year directly on Firestore
   const handleResetYearData = (year: number, resetType: 'all' | 'ordersOnly' | 'baselineOnly' = 'all') => {
     if (resetType === 'all' || resetType === 'ordersOnly') {
-      const updatedOrders = orders.filter(o => {
-        const oYear = new Date(o.date).getFullYear();
-        return oYear !== year;
+      const ordersInYear = orders.filter(o => new Date(o.date).getFullYear() === year);
+      ordersInYear.forEach(o => {
+        deleteOrderFromFirestore(o.id).catch(console.error);
       });
-      setOrders(updatedOrders);
-      saveStoredOrders(updatedOrders);
-      syncAllOrdersToFirestore(updatedOrders).catch(console.error);
     }
 
     if (resetType === 'all' || resetType === 'baselineOnly') {
-      const updatedCustomers = customers.map(c => {
-        const newYearly = { ...(c.initialYearlyRevenues || {}) };
-        delete newYearly[year];
-        const updatedCust: Customer = {
-          ...c,
-          initialYearlyRevenues: newYearly,
-          initialYearlyRevenue: year === new Date().getFullYear() ? 0 : c.initialYearlyRevenue
-        };
-        saveCustomerToFirestore(updatedCust).catch(console.error);
-        return updatedCust;
+      customers.forEach(c => {
+        if (c.initialYearlyRevenues && c.initialYearlyRevenues[year]) {
+          const newYearly = { ...c.initialYearlyRevenues };
+          delete newYearly[year];
+          const updatedCust: Customer = {
+            ...c,
+            initialYearlyRevenues: newYearly,
+            initialYearlyRevenue: year === new Date().getFullYear() ? 0 : c.initialYearlyRevenue
+          };
+          saveCustomerToFirestore(updatedCust, userContext).catch(console.error);
+        }
       });
-      setCustomers(updatedCustomers);
-      saveStoredCustomers(updatedCustomers);
     }
   };
 
-  // Update order status
+  // Update order status directly on Firestore
   const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
     const updatedOrder: Order = { ...targetOrder, status, updatedAt: new Date().toISOString() };
-    const updated = orders.map(o => (o.id === orderId ? updatedOrder : o));
-    setOrders(updated);
-    saveStoredOrders(updated);
-    saveOrderToFirestore(updatedOrder).catch(console.error);
+    saveOrderToFirestore(updatedOrder, userContext).catch(console.error);
   };
 
-  // Quick pay remaining debt on order
+  // Quick pay remaining debt on order directly on Firestore
   const handlePayOrderDebt = (order: Order) => {
     const paymentAmt = order.totalDue;
     if (paymentAmt <= 0) return;
@@ -580,17 +487,12 @@ export default function App() {
       status: 'completed' as OrderStatus,
       updatedAt: new Date().toISOString()
     };
-    const updated = orders.map(o => (o.id === order.id ? updatedOrder : o));
-    setOrders(updated);
-    saveStoredOrders(updated);
-    saveOrderToFirestore(updatedOrder).catch(console.error);
+    saveOrderToFirestore(updatedOrder, userContext).catch(console.error);
   };
 
-  // Update workshop info
+  // Update workshop info directly on Firestore
   const handleUpdateWorkshop = (info: WorkshopInfo) => {
-    setWorkshop(info);
-    saveStoredWorkshopInfo(info);
-    saveWorkshopInfoToFirestore(info).catch(console.error);
+    saveWorkshopInfoToFirestore(info, userContext).catch(console.error);
   };
 
   // 1. Loading splash screen while verifying persistent session
@@ -612,6 +514,22 @@ export default function App() {
   // 2. Lock UI completely if user is not signed in
   if (!currentUser) {
     return <LoginView onLoginSuccess={() => {}} />;
+  }
+
+  // 3. Loading Spinner while connecting & subscribing to Cloud Firestore
+  if (dataLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-400 to-amber-300 text-slate-950 font-black text-2xl flex items-center justify-center shadow-xl shadow-amber-500/20 ring-4 ring-slate-800 animate-pulse mb-5">
+          194
+        </div>
+        <div className="flex items-center gap-3 text-slate-200 font-semibold text-sm bg-slate-900/90 border border-slate-800 px-5 py-3 rounded-2xl shadow-xl">
+          <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+          <span>Đang kết nối Cloud Firestore và đồng bộ dữ liệu thời gian thực...</span>
+        </div>
+        <p className="text-xs text-slate-500 mt-3">Tiệm In 194 • Toàn bộ dữ liệu được bảo vệ an toàn trên Cloud</p>
+      </div>
+    );
   }
 
   return (
@@ -689,9 +607,9 @@ export default function App() {
           </button>
           <button
             onClick={() => setIsDataManagementOpen(true)}
-            className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-red-700 bg-red-50 border border-red-200 shrink-0"
+            className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 shrink-0"
           >
-            Xóa / Nạp
+            Cloud Data
           </button>
         </div>
 
@@ -809,19 +727,21 @@ export default function App() {
         <SettingsModal
           workshop={workshop}
           onUpdateWorkshop={handleUpdateWorkshop}
-          onReloadAllData={loadAllData}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
 
-      {/* Data Management & Wipe Modal */}
+      {/* Data Management Modal */}
       {isDataManagementOpen && (
         <DataManagementModal
-          ordersCount={orders.length}
-          customersCount={customers.length}
-          productsCount={products.length}
-          materialsCount={materials.length}
-          onDataChanged={loadAllData}
+          orders={orders}
+          customers={customers}
+          products={products}
+          materials={materials}
+          stockImports={stockImports}
+          combos={combos}
+          workshop={workshop}
+          userContext={userContext}
           onClose={() => setIsDataManagementOpen(false)}
         />
       )}
