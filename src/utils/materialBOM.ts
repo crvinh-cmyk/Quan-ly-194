@@ -45,6 +45,132 @@ export function extractEffectiveSize(size?: string, name?: string, code?: string
 }
 
 /**
+ * Tự động xác định hoặc tra cứu Cốt Vật Tư Tương Thích (materialCoreCode)
+ * Cho sản phẩm trong Bảng Giá hoặc dòng hàng trong Hóa Đơn Bán Hàng:
+ * 1. Ưu tiên 1: Mã cốt vật tư thủ công (materialCoreCode) đã gán trên sản phẩm hoặc dòng hàng
+ * 2. Ưu tiên 2: Tra cứu mã sản phẩm trong danh mục sản phẩm (catalogProducts)
+ * 3. Ưu tiên 3: Tự động phân loại theo quy chuẩn Tiệm In 194 (Fomex 9li cho 4K/HD Pro, Ván MDF cho các ảnh khác, Không cốt cho In/Ép/Album/Khung)
+ */
+export function resolveProductCoreMaterial(
+  prod: {
+    code?: string;
+    name?: string;
+    size?: string;
+    note?: string;
+    description?: string;
+    materialCoreCode?: string;
+    materialCoreName?: string;
+    materialCoreId?: string;
+  },
+  materials: Material[],
+  catalogProducts?: Product[]
+): {
+  materialCoreCode: string;
+  materialCoreName: string;
+  materialCoreId?: string;
+  isNone: boolean;
+} {
+  // 1. Kiểm tra trực tiếp trên prod (nếu là OrderItem hoặc Product đã có materialCoreCode)
+  let explicitCode = (prod.materialCoreCode || '').trim();
+  let explicitName = (prod.materialCoreName || '').trim();
+  let explicitId = prod.materialCoreId;
+
+  // 1b. Nếu chưa có trên prod, tìm sản phẩm tương ứng trong catalogProducts theo mã sản phẩm
+  if (!explicitCode && catalogProducts && prod.code) {
+    const cleanProdCode = prod.code.toUpperCase().trim();
+    const matched = catalogProducts.find(p => p.code.toUpperCase().trim() === cleanProdCode);
+    if (matched && matched.materialCoreCode) {
+      explicitCode = matched.materialCoreCode.trim();
+      explicitName = (matched.materialCoreName || '').trim();
+      explicitId = matched.materialCoreId;
+    }
+  }
+
+  if (explicitCode) {
+    const upper = explicitCode.toUpperCase();
+    if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT' || upper === '0') {
+      return {
+        materialCoreCode: 'NONE',
+        materialCoreName: 'Không dùng cốt ván',
+        materialCoreId: undefined,
+        isNone: true
+      };
+    }
+
+    // Tìm chính xác trong kho vật tư theo mã hoặc id
+    const matchedMat = materials.find(
+      m => m.code.toUpperCase() === upper || (explicitId && m.id === explicitId)
+    );
+
+    if (matchedMat) {
+      return {
+        materialCoreCode: matchedMat.code,
+        materialCoreName: matchedMat.name,
+        materialCoreId: matchedMat.id,
+        isNone: false
+      };
+    }
+
+    return {
+      materialCoreCode: upper,
+      materialCoreName: explicitName || upper,
+      materialCoreId: explicitId,
+      isNone: false
+    };
+  }
+
+  // 2. Fallback: Tự động phân loại theo quy chuẩn Tiệm In 194
+  const coreType = getProductCoreType(prod);
+  if (coreType === 'none') {
+    return {
+      materialCoreCode: 'NONE',
+      materialCoreName: 'Không dùng cốt ván',
+      materialCoreId: undefined,
+      isNone: true
+    };
+  }
+
+  const effectiveSize = extractEffectiveSize(prod.size, prod.name, prod.code);
+  const normSize = normalizeSize(effectiveSize);
+
+  if (coreType === 'fomex') {
+    const fomexMat = materials.find(m => m.category === 'Fomex siêu nhẹ' && normSize && normalizeSize(m.code).includes(normSize))
+      || materials.find(m => m.category === 'Fomex siêu nhẹ');
+    if (fomexMat) {
+      return {
+        materialCoreCode: fomexMat.code,
+        materialCoreName: fomexMat.name,
+        materialCoreId: fomexMat.id,
+        isNone: false
+      };
+    }
+    return {
+      materialCoreCode: normSize ? `VT-FOMEX-${normSize}` : 'VT-FOMEX-9LI',
+      materialCoreName: `Fomex 9li ${effectiveSize || ''}`.trim(),
+      isNone: false
+    };
+  }
+
+  // Gỗ MDF:
+  const mdfMat = materials.find(m => m.category === 'Gỗ MDF' && normSize && normalizeSize(m.code).includes(normSize))
+    || materials.find(m => m.category === 'Gỗ MDF');
+  if (mdfMat) {
+    return {
+      materialCoreCode: mdfMat.code,
+      materialCoreName: mdfMat.name,
+      materialCoreId: mdfMat.id,
+      isNone: false
+    };
+  }
+
+  return {
+    materialCoreCode: normSize ? `VT-GO-${normSize}` : 'VT-GO-MDF',
+    materialCoreName: `Gỗ MDF ${effectiveSize || ''}`.trim(),
+    isNone: false
+  };
+}
+
+/**
  * Calculates raw materials for a SINGLE item in the sales invoice
  */
 export function calculateItemBOM(
@@ -89,14 +215,41 @@ export function calculateItemBOM(
     return list;
   }
 
-  // 3. Quy chuẩn định mức tinh giản theo yêu cầu Tiệm In 194:
+  // 2.5. Ưu tiên cao nhất: Kiểm tra mã cốt vật tư tương thích (materialCoreCode)
+  // Được cấu hình trực tiếp từ Bảng Giá Sản Phẩm hoặc gán trên dòng hóa đơn bán hàng
+  const explicitCoreCode = (item.materialCoreCode || matchingProd?.materialCoreCode || '').trim();
+  const explicitCoreId = item.materialCoreId || matchingProd?.materialCoreId;
+
+  if (explicitCoreCode) {
+    const upperCore = explicitCoreCode.toUpperCase();
+    // Nếu được chỉ định là KHÔNG CỐT (NONE) -> Tuyệt đối không trừ cốt kho
+    if (upperCore === 'NONE' || upperCore === 'KHONG' || upperCore === 'KHONG_COT' || upperCore === '0') {
+      return [];
+    }
+
+    // Tìm chính xác vật tư trong kho theo Mã hoặc ID
+    const directMat = materials.find(
+      m => m.code.toUpperCase() === upperCore || (explicitCoreId && m.id === explicitCoreId)
+    );
+
+    if (directMat) {
+      return [{
+        material: directMat,
+        quantity: item.quantity * 1,
+        reason: `${item.quantity} ${directMat.unit} ${directMat.name} (Cốt tương thích chuẩn: ${directMat.code})`
+      }];
+    }
+  }
+
+  // 3. Quy chuẩn định mức tinh giản theo yêu cầu Tiệm In 194 (Fallback):
   // - Bỏ trống cốt (KHÔNG TRỪ VẬT TƯ CỐT): In ảnh, In ép, Khung gia cố (NEP), Album mở phẳng, Photobook, Tạp chí
   // - CỐT FOMEX 9LI SIÊU NHẸ: DUY NHẤT dành cho "Ảnh 4K" và "Ảnh HD Pro"
   // - CỐT VÁN GỖ MDF: Tất cả các dòng ảnh còn lại (HD Gương Siêu Bóng, Lụa Viền, Mika, Lụa Khung, Ép Gỗ, Tráng Gương, Pha Lê...)
   const coreType = getProductCoreType({
     code: item.productCode,
     name: item.productName,
-    note: item.note
+    note: item.note,
+    materialCoreCode: explicitCoreCode
   });
 
   // Nếu là sản phẩm bỏ trống cốt -> Không trừ cốt ván MDF / Fomex

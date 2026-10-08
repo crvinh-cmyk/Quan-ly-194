@@ -19,6 +19,9 @@ export interface Product {
   unit: string; // 'tấm', 'cái', 'cuốn', 'bộ'
   description?: string;
   recipe?: ProductRecipeItem[]; // Danh sách vật tư kho cấu thành tấm ảnh này
+  materialCoreCode?: string; // Mã vật tư kho tương thích (VD: 'VT-GO-6090', 'VT-FOMEX-6090' hoặc 'NONE')
+  materialCoreName?: string; // Tên cốt vật tư tương thích (VD: 'Gỗ MDF 60x90 12li Lõi Xanh Chống Ẩm')
+  materialCoreId?: string; // ID vật tư kho tương ứng (nếu có)
   userId?: string;
   createdBy?: string;
   createdAt?: string;
@@ -53,6 +56,9 @@ export interface OrderItem {
   amount: number; // quantity * price
   note?: string;
   customMaterials?: MaterialDeduction[]; // Danh sách vật tư tùy chỉnh cho dòng ảnh này
+  materialCoreCode?: string; // Mã cốt vật tư tương thích tự động nhập theo sản phẩm (hoặc nhập thủ công)
+  materialCoreName?: string; // Tên cốt vật tư tương thích
+  materialCoreId?: string; // ID vật tư kho tương ứng
 }
 
 export type OrderStatus = 'pending' | 'processing' | 'completed' | 'delivered' | 'cancelled';

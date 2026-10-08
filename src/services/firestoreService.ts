@@ -162,6 +162,9 @@ export function subscribeProducts(
         unit: raw.unit || 'cái',
         description: raw.description,
         recipe: raw.recipe,
+        materialCoreCode: raw.materialCoreCode,
+        materialCoreName: raw.materialCoreName,
+        materialCoreId: raw.materialCoreId,
         userId: raw.userId,
         createdBy: raw.createdBy,
         createdAt: normalizeFirestoreDate(raw.createdAt),
@@ -500,3 +503,135 @@ export async function deleteComboFromFirestore(comboId: string): Promise<void> {
   const docRef = doc(db, COLLECTIONS.COMBOS, comboId);
   await deleteDoc(docRef);
 }
+
+// =================================================================
+// 8. INVENTORY PRESETS / QUICK SUGGESTIONS (Gợi ý chọn nhanh NCC & Mặt hàng)
+// =================================================================
+export const DEFAULT_PRESET_SUPPLIERS = [
+  'Trang Phóng',
+  'SVP',
+  'Xuân Trường HN',
+  'Toản HN',
+  'Ninh Trang',
+  'Tuấn Tú Vinh',
+  'Khác'
+];
+
+export const DEFAULT_PRESET_ITEMS = [
+  'Ván MDF',
+  'Fomex',
+  'Khung Phào',
+  'Mica',
+  'Màng lụa',
+  'Nẹp Viền',
+  'Keo',
+  'Chân sắt',
+  'Móc treo',
+  'Màng PE',
+  'Băng keo',
+  'Giấy',
+  'Mực',
+  'Ruột album',
+  'Khác'
+];
+
+export interface InventoryPresets {
+  suppliers: string[];
+  items: string[];
+  updatedAt?: string;
+  userId?: string;
+}
+
+const STORAGE_KEY_PRESETS = 'quanly194_inventory_presets';
+
+export function getLocalInventoryPresets(): InventoryPresets {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PRESETS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.suppliers) && Array.isArray(parsed.items) && parsed.suppliers.length > 0 && parsed.items.length > 0) {
+        return {
+          suppliers: parsed.suppliers,
+          items: parsed.items,
+          updatedAt: parsed.updatedAt
+        };
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return {
+    suppliers: [...DEFAULT_PRESET_SUPPLIERS],
+    items: [...DEFAULT_PRESET_ITEMS]
+  };
+}
+
+export function saveLocalInventoryPresets(presets: InventoryPresets): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_PRESETS, JSON.stringify(presets));
+  } catch (e) {
+    // ignore
+  }
+}
+
+export function subscribeInventoryPresets(
+  onData: (presets: InventoryPresets) => void,
+  onError?: (err: Error) => void
+) {
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'inventory_presets');
+  return onSnapshot(docRef, { includeMetadataChanges: false }, (snapshot) => {
+    if (snapshot.exists()) {
+      const raw = snapshot.data();
+      const rawSuppliers = Array.isArray(raw.suppliers) ? raw.suppliers : [];
+      const rawItems = Array.isArray(raw.items) ? raw.items : [];
+      
+      const suppliers = rawSuppliers.length > 0
+        ? rawSuppliers.map((s: any) => String(s).trim()).filter(Boolean)
+        : [...DEFAULT_PRESET_SUPPLIERS];
+
+      const items = rawItems.length > 0
+        ? rawItems.map((it: any) => String(it).trim()).filter(Boolean)
+        : [...DEFAULT_PRESET_ITEMS];
+
+      const presets: InventoryPresets = {
+        suppliers,
+        items,
+        updatedAt: raw.updatedAt,
+        userId: raw.userId
+      };
+      saveLocalInventoryPresets(presets);
+      onData(presets);
+    } else {
+      const initial = getLocalInventoryPresets();
+      onData(initial);
+    }
+  }, (error) => {
+    console.error('Firestore inventory_presets onSnapshot error:', error);
+    if (onError) onError(error);
+  });
+}
+
+export async function saveInventoryPresetsToFirestore(
+  presets: { suppliers: string[]; items: string[] },
+  user?: AuthUserContext | null
+): Promise<void> {
+  const cleanedSuppliers = presets.suppliers
+    .map(s => s.trim())
+    .filter(Boolean);
+  const cleanedItems = presets.items
+    .map(it => it.trim())
+    .filter(Boolean);
+
+  const payload: InventoryPresets = {
+    suppliers: cleanedSuppliers.length > 0 ? cleanedSuppliers : [...DEFAULT_PRESET_SUPPLIERS],
+    items: cleanedItems.length > 0 ? cleanedItems : [...DEFAULT_PRESET_ITEMS],
+    updatedAt: new Date().toISOString()
+  };
+
+  saveLocalInventoryPresets(payload);
+
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'inventory_presets');
+  const enriched = attachUserInfo(payload, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+}
+

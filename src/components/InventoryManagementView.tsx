@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Material, MaterialCategory, StockImportReceipt, StockImportItem, Order, Product } from '../types';
 import { formatCurrency, formatNumber, formatDateVN } from '../utils/formatters';
 import { getMaterialUsageSummary, calculateOrderBOM, createMaterialDeductionRecords } from '../utils/materialBOM';
@@ -6,39 +6,22 @@ import {
   Boxes, Plus, Search, AlertTriangle, CheckCircle2, TrendingDown,
   ArrowDownLeft, FileText, Calendar, DollarSign, PackagePlus,
   Edit, Trash2, SlidersHorizontal, RefreshCw, X, ArrowUpDown, Truck, ChevronRight,
-  BookOpen, Sparkles, ShoppingBag, ArrowRight, Building2, Filter, Layers, PieChart
+  BookOpen, Sparkles, ShoppingBag, ArrowRight, Building2, Filter, Layers, PieChart,
+  Settings, Check, RotateCcw, Package
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
+import {
+  subscribeInventoryPresets,
+  saveInventoryPresetsToFirestore,
+  getLocalInventoryPresets,
+  InventoryPresets,
+  DEFAULT_PRESET_SUPPLIERS,
+  DEFAULT_PRESET_ITEMS
+} from '../services/firestoreService';
 
-// 1. Danh sách cố định 7 Nhà Cung Cấp chuẩn hóa cho xưởng
-export const FIXED_SUPPLIERS = [
-  'Trang Phóng',
-  'SVP',
-  'Xuân Trường HN',
-  'Toản HN',
-  'Ninh Trang',
-  'Tuấn Tú Vinh',
-  'Khác'
-] as const;
-
-// 2. Danh sách gợi ý cố định các Mặt Hàng / Chủng Loại Vật Tư Nhập
-export const FIXED_IMPORT_ITEMS = [
-  'Ván MDF',
-  'Fomex',
-  'Khung Phào',
-  'Mica',
-  'Màng lụa',
-  'Nẹp Viền',
-  'Keo',
-  'Chân sắt',
-  'Móc treo',
-  'Màng PE',
-  'Băng keo',
-  'Giấy',
-  'Mực',
-  'Ruột album',
-  'Khác'
-] as const;
+// Danh sách gợi ý Nhà Cung Cấp & Mặt Hàng (Khởi tạo mặc định)
+export const FIXED_SUPPLIERS = DEFAULT_PRESET_SUPPLIERS;
+export const FIXED_IMPORT_ITEMS = DEFAULT_PRESET_ITEMS;
 
 interface InventoryManagementViewProps {
   materials: Material[];
@@ -122,6 +105,157 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
   const [importUnit, setImportUnit] = useState<string>('Lô');
   const [importNotes, setImportNotes] = useState<string>('');
   const [importReceiptCode, setImportReceiptCode] = useState<string>('');
+
+  // Quick Pick Presets (Đồng bộ Realtime Firestore & Local Cache)
+  const [inventoryPresets, setInventoryPresets] = useState<InventoryPresets>(() => getLocalInventoryPresets());
+  const [isManageSuggestionsOpen, setIsManageSuggestionsOpen] = useState(false);
+  const [manageTab, setManageTab] = useState<'suppliers' | 'items'>('suppliers');
+  const [newSupplierInput, setNewSupplierInput] = useState('');
+  const [newItemInput, setNewItemInput] = useState('');
+  const [editingSupplierIdx, setEditingSupplierIdx] = useState<number | null>(null);
+  const [editingSupplierText, setEditingSupplierText] = useState('');
+  const [editingItemIdx, setEditingItemIdx] = useState<number | null>(null);
+  const [editingItemText, setEditingItemText] = useState('');
+  const [presetFeedback, setPresetFeedback] = useState<string | null>(null);
+
+  // Lắng nghe dữ liệu gợi ý Real-time từ Cloud Firestore
+  useEffect(() => {
+    const unsub = subscribeInventoryPresets((presets) => {
+      setInventoryPresets(presets);
+    });
+    return () => unsub();
+  }, []);
+
+  // Helper bóc tách danh sách các mặt hàng đang có trong ô nhập
+  const parseCurrentImportItems = (text: string): string[] => {
+    return text
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+  };
+
+  // Helper kiểm tra xem mặt hàng gợi ý có đang được chọn không
+  const isItemChipSelected = (item: string): boolean => {
+    if (!importItemName.trim()) return false;
+    const current = parseCurrentImportItems(importItemName);
+    const target = item.trim().toLowerCase();
+    return current.some(c => {
+      const cl = c.toLowerCase();
+      return cl === target || cl.startsWith(target + ' ') || cl.startsWith(target + '(');
+    });
+  };
+
+  // Toggle thêm hoặc bỏ chọn nhiều mặt hàng cùng lúc (Multi-select)
+  const handleToggleItemChip = (item: string) => {
+    const current = parseCurrentImportItems(importItemName);
+    const target = item.trim().toLowerCase();
+    const existingIndex = current.findIndex(c => {
+      const cl = c.toLowerCase();
+      return cl === target || cl.startsWith(target + ' ') || cl.startsWith(target + '(');
+    });
+
+    let nextItems: string[];
+    if (existingIndex >= 0) {
+      // Đã có -> Bỏ chọn
+      nextItems = current.filter((_, idx) => idx !== existingIndex);
+    } else {
+      // Chưa có -> Thêm vào chuỗi mặt hàng
+      nextItems = [...current, item.trim()];
+    }
+    setImportItemName(nextItems.join(', '));
+  };
+
+  // Lưu danh sách gợi ý mới lên Firestore
+  const handlePersistPresets = async (updated: { suppliers: string[]; items: string[] }) => {
+    setInventoryPresets(prev => ({ ...prev, ...updated }));
+    try {
+      await saveInventoryPresetsToFirestore(updated);
+      setPresetFeedback('Đã đồng bộ lên Cloud thành công!');
+      setTimeout(() => setPresetFeedback(null), 2500);
+    } catch (e) {
+      console.error('Failed to save presets to Firestore', e);
+    }
+  };
+
+  // Thêm Nhà Cung Cấp vào gợi ý
+  const handleAddSupplierPreset = () => {
+    const trimmed = newSupplierInput.trim();
+    if (!trimmed) return;
+    if (inventoryPresets.suppliers.some(s => s.toLowerCase() === trimmed.toLowerCase())) {
+      alert('Nhà cung cấp "' + trimmed + '" đã có trong danh sách gợi ý!');
+      return;
+    }
+    const next = [...inventoryPresets.suppliers, trimmed];
+    handlePersistPresets({ suppliers: next, items: inventoryPresets.items });
+    setNewSupplierInput('');
+  };
+
+  // Sửa tên Nhà Cung Cấp
+  const handleSaveEditSupplier = (idx: number) => {
+    const trimmed = editingSupplierText.trim();
+    if (!trimmed) return;
+    const next = [...inventoryPresets.suppliers];
+    next[idx] = trimmed;
+    handlePersistPresets({ suppliers: next, items: inventoryPresets.items });
+    setEditingSupplierIdx(null);
+  };
+
+  // Xóa Nhà Cung Cấp
+  const handleDeleteSupplierPreset = (idx: number) => {
+    if (inventoryPresets.suppliers.length <= 1) {
+      alert('Cần giữ lại ít nhất 1 nhà cung cấp trong danh sách gợi ý.');
+      return;
+    }
+    const next = inventoryPresets.suppliers.filter((_, i) => i !== idx);
+    handlePersistPresets({ suppliers: next, items: inventoryPresets.items });
+  };
+
+  // Khôi phục 7 NCC gốc
+  const handleResetSuppliersToDefault = () => {
+    if (window.confirm('Khôi phục danh sách về 7 Nhà Cung Cấp chuẩn ban đầu?')) {
+      handlePersistPresets({ suppliers: [...DEFAULT_PRESET_SUPPLIERS], items: inventoryPresets.items });
+    }
+  };
+
+  // Thêm Mặt Hàng vào gợi ý
+  const handleAddItemPreset = () => {
+    const trimmed = newItemInput.trim();
+    if (!trimmed) return;
+    if (inventoryPresets.items.some(it => it.toLowerCase() === trimmed.toLowerCase())) {
+      alert('Mặt hàng "' + trimmed + '" đã có trong danh sách gợi ý!');
+      return;
+    }
+    const next = [...inventoryPresets.items, trimmed];
+    handlePersistPresets({ suppliers: inventoryPresets.suppliers, items: next });
+    setNewItemInput('');
+  };
+
+  // Sửa tên Mặt Hàng
+  const handleSaveEditItem = (idx: number) => {
+    const trimmed = editingItemText.trim();
+    if (!trimmed) return;
+    const next = [...inventoryPresets.items];
+    next[idx] = trimmed;
+    handlePersistPresets({ suppliers: inventoryPresets.suppliers, items: next });
+    setEditingItemIdx(null);
+  };
+
+  // Xóa Mặt Hàng
+  const handleDeleteItemPreset = (idx: number) => {
+    if (inventoryPresets.items.length <= 1) {
+      alert('Cần giữ lại ít nhất 1 mặt hàng trong danh sách gợi ý.');
+      return;
+    }
+    const next = inventoryPresets.items.filter((_, i) => i !== idx);
+    handlePersistPresets({ suppliers: inventoryPresets.suppliers, items: next });
+  };
+
+  // Khôi phục 15 Mặt hàng gốc
+  const handleResetItemsToDefault = () => {
+    if (window.confirm('Khôi phục danh sách về 15 Mặt Hàng chuẩn ban đầu?')) {
+      handlePersistPresets({ suppliers: inventoryPresets.suppliers, items: [...DEFAULT_PRESET_ITEMS] });
+    }
+  };
 
   // Available categories
   const categories: MaterialCategory[] = [
@@ -1576,9 +1710,9 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   placeholder="VD: Trang Phóng, SVP, Xuân Trường HN, Toản HN..."
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-amber-500 outline-none"
                 />
-                {/* 7 Fixed Suppliers Quick Chips */}
+                {/* Suppliers Quick Chips */}
                 <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                  {FIXED_SUPPLIERS.map(s => {
+                  {inventoryPresets.suppliers.map(s => {
                     const isSelected = formSupplier.trim().toLowerCase() === s.toLowerCase();
                     return (
                       <button
@@ -1683,7 +1817,23 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   <label className="block text-xs font-bold text-slate-700">
                     Tên Nhà Cung Cấp / Nơi Mua <span className="text-rose-500">*</span>
                   </label>
-                  <span className="text-[11px] text-amber-700 font-medium">7 NCC Chọn Nhanh</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-amber-700 font-medium">
+                      {inventoryPresets.suppliers.length} NCC Gợi Ý
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManageTab('suppliers');
+                        setIsManageSuggestionsOpen(true);
+                      }}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                      title="Thêm hoặc sửa danh sách Nhà Cung Cấp gợi ý"
+                    >
+                      <Settings className="w-3 h-3 text-amber-700" />
+                      <span>Sửa gợi ý</span>
+                    </button>
+                  </div>
                 </div>
                 <input
                   type="text"
@@ -1694,9 +1844,9 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-200 transition"
                 />
 
-                {/* Danh sách 7 nút chọn nhanh cố định cho Nhà Cung Cấp */}
+                {/* Danh sách các nút chọn nhanh cho Nhà Cung Cấp */}
                 <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                  {FIXED_SUPPLIERS.map(s => {
+                  {inventoryPresets.suppliers.map(s => {
                     const isSelected = importSupplier.trim().toLowerCase() === s.toLowerCase();
                     return (
                       <button
@@ -1713,44 +1863,96 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                       </button>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManageTab('suppliers');
+                      setIsManageSuggestionsOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-dashed border-amber-400 transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Thêm NCC</span>
+                  </button>
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-slate-700">
-                    Mặt Hàng / Chủng Loại Vật Tư Nhập <span className="text-rose-500">*</span>
-                  </label>
-                  <span className="text-[11px] text-emerald-700 font-medium">Gợi ý mặt hàng</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Mặt Hàng / Chủng Loại Vật Tư Nhập <span className="text-rose-500">*</span>
+                    </label>
+                    {parseCurrentImportItems(importItemName).length > 0 && (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                        Đã chọn {parseCurrentImportItems(importItemName).length} mặt hàng
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {parseCurrentImportItems(importItemName).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setImportItemName('')}
+                        className="text-[11px] text-rose-600 hover:text-rose-700 font-semibold cursor-pointer underline mr-1"
+                      >
+                        Xóa chọn
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManageTab('items');
+                        setIsManageSuggestionsOpen(true);
+                      }}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                      title="Thêm hoặc sửa danh sách Mặt Hàng gợi ý"
+                    >
+                      <Settings className="w-3 h-3 text-emerald-700" />
+                      <span>Sửa gợi ý</span>
+                    </button>
+                  </div>
                 </div>
                 <input
                   type="text"
                   required
                   value={importItemName}
                   onChange={e => setImportItemName(e.target.value)}
-                  placeholder="Chọn nhanh gợi ý bên dưới hoặc tự nhập chi tiết..."
+                  placeholder="Bấm chọn 1 hoặc NHIỀU gợi ý bên dưới, hoặc tự nhập chi tiết..."
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 outline-none focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition"
                 />
 
-                {/* Danh sách các thẻ chọn nhanh cố định cho Mặt Hàng / Chủng Loại Vật Tư */}
+                {/* Danh sách các thẻ chọn nhanh cho Mặt Hàng / Chủng Loại Vật Tư (Multi-select) */}
                 <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                  {FIXED_IMPORT_ITEMS.map(item => {
-                    const isSelected = importItemName.trim().toLowerCase() === item.toLowerCase();
+                  {inventoryPresets.items.map(item => {
+                    const isSelected = isItemChipSelected(item);
                     return (
                       <button
                         key={item}
                         type="button"
-                        onClick={() => setImportItemName(item)}
+                        onClick={() => handleToggleItemChip(item)}
                         className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
                           isSelected
                             ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                             : 'bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-950 border-slate-200 active:scale-95'
                         }`}
+                        title={isSelected ? `Bấm để bỏ chọn ${item}` : `Bấm để thêm ${item} vào ô nhập`}
                       >
                         {isSelected ? `✓ ${item}` : `+ ${item}`}
                       </button>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManageTab('items');
+                      setIsManageSuggestionsOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-dashed border-emerald-400 transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Thêm mặt hàng</span>
+                  </button>
                 </div>
               </div>
 
@@ -2335,6 +2537,331 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition"
               >
                 Đã Hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 8: QUẢN LÝ GỢI Ý CHỌN NHANH (Thêm / Sửa Thủ Công NCC & Mặt Hàng) */}
+      {isManageSuggestionsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-5 sm:p-6 border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-xl">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base sm:text-lg text-slate-900">
+                    Quản Lý Danh Sách Gợi Ý Chọn Nhanh
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Tùy chỉnh thêm, sửa tên hoặc xóa các nút gợi ý trong phiếu nhập kho
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManageSuggestionsOpen(false);
+                  setEditingSupplierIdx(null);
+                  setEditingItemIdx(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* TAB SELECTOR: SUPPLIERS VS ITEMS */}
+            <div className="flex items-center border-b border-slate-200 mb-4 shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={() => setManageTab('suppliers')}
+                className={`flex items-center gap-2 pb-2.5 px-3 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer ${
+                  manageTab === 'suppliers'
+                    ? 'border-amber-600 text-amber-800'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Building2 className="w-4 h-4 text-amber-600" />
+                <span>Nhà Cung Cấp ({inventoryPresets.suppliers.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setManageTab('items')}
+                className={`flex items-center gap-2 pb-2.5 px-3 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer ${
+                  manageTab === 'items'
+                    ? 'border-emerald-600 text-emerald-800'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Package className="w-4 h-4 text-emerald-600" />
+                <span>Mặt Hàng / Chủng Loại ({inventoryPresets.items.length})</span>
+              </button>
+            </div>
+
+            {/* TAB CONTENT: SUPPLIERS */}
+            {manageTab === 'suppliers' && (
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                {/* Form thêm mới NCC */}
+                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2">
+                  <label className="block text-xs font-bold text-amber-950">
+                    Thêm Nhà Cung Cấp Mới Vào Danh Sách Gợi Ý:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newSupplierInput}
+                      onChange={e => setNewSupplierInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddSupplierPreset();
+                        }
+                      }}
+                      placeholder="VD: Cty TNHH Phú Mỹ, Nhôm Kính Toàn Thắng..."
+                      className="flex-1 px-3 py-2 text-xs bg-white border border-amber-300 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddSupplierPreset}
+                      className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition cursor-pointer flex items-center gap-1 shrink-0 shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Danh sách hiện tại */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-slate-500 text-[11px] px-1">
+                    <span>Danh sách {inventoryPresets.suppliers.length} nhà cung cấp hiện tại:</span>
+                    <span>Bấm bút chì để sửa tên</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white max-h-64 overflow-y-auto">
+                    {inventoryPresets.suppliers.map((s, idx) => (
+                      <div key={idx} className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 transition">
+                        {editingSupplierIdx === idx ? (
+                          <div className="flex-1 flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingSupplierText}
+                              onChange={e => setEditingSupplierText(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleSaveEditSupplier(idx);
+                              }}
+                              className="flex-1 px-2.5 py-1 text-xs border border-amber-500 rounded-lg font-bold outline-none bg-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditSupplier(idx)}
+                              className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg cursor-pointer"
+                              title="Lưu tên mới"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingSupplierIdx(null)}
+                              className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                              title="Hủy"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 font-bold text-slate-800">
+                              <span className="w-5 text-center text-slate-400 font-mono text-[11px]">{idx + 1}.</span>
+                              <Building2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <span>{s}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSupplierIdx(idx);
+                                  setEditingSupplierText(s);
+                                }}
+                                className="p-1 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-md transition cursor-pointer"
+                                title="Sửa tên NCC"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSupplierPreset(idx)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition cursor-pointer"
+                                title="Xóa khỏi gợi ý"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleResetSuppliersToDefault}
+                    className="text-[11px] text-slate-500 hover:text-amber-800 font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Khôi phục 7 NCC ban đầu</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: ITEMS */}
+            {manageTab === 'items' && (
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                {/* Form thêm mới mặt hàng */}
+                <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
+                  <label className="block text-xs font-bold text-emerald-950">
+                    Thêm Mặt Hàng / Chủng Loại Mới Vào Danh Sách Gợi Ý:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newItemInput}
+                      onChange={e => setNewItemInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddItemPreset();
+                        }
+                      }}
+                      placeholder="VD: Khung tranh canvas, Đèn LED, Màng nhiệt bóng..."
+                      className="flex-1 px-3 py-2 text-xs bg-white border border-emerald-300 rounded-xl font-bold outline-none focus:ring-2 focus:ring-emerald-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddItemPreset}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition cursor-pointer flex items-center gap-1 shrink-0 shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Danh sách hiện tại */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-slate-500 text-[11px] px-1">
+                    <span>Danh sách {inventoryPresets.items.length} mặt hàng gợi ý hiện tại:</span>
+                    <span>Bấm bút chì để sửa tên</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white max-h-64 overflow-y-auto">
+                    {inventoryPresets.items.map((it, idx) => (
+                      <div key={idx} className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 transition">
+                        {editingItemIdx === idx ? (
+                          <div className="flex-1 flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingItemText}
+                              onChange={e => setEditingItemText(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleSaveEditItem(idx);
+                              }}
+                              className="flex-1 px-2.5 py-1 text-xs border border-emerald-500 rounded-lg font-bold outline-none bg-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditItem(idx)}
+                              className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg cursor-pointer"
+                              title="Lưu tên mới"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingItemIdx(null)}
+                              className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                              title="Hủy"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 font-bold text-slate-800">
+                              <span className="w-5 text-center text-slate-400 font-mono text-[11px]">{idx + 1}.</span>
+                              <Package className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>{it}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingItemIdx(idx);
+                                  setEditingItemText(it);
+                                }}
+                                className="p-1 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-md transition cursor-pointer"
+                                title="Sửa tên mặt hàng"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteItemPreset(idx)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition cursor-pointer"
+                                title="Xóa khỏi gợi ý"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleResetItemsToDefault}
+                    className="text-[11px] text-slate-500 hover:text-emerald-800 font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Khôi phục 15 Mặt Hàng ban đầu</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* FEEDBACK STATUS & CLOSE BUTTON */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-200 mt-4 shrink-0">
+              <div className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                {presetFeedback && (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{presetFeedback}</span>
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManageSuggestionsOpen(false);
+                  setEditingSupplierIdx(null);
+                  setEditingItemIdx(null);
+                }}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Hoàn Tất & Đóng
               </button>
             </div>
           </div>

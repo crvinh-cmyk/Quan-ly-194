@@ -14,7 +14,19 @@ export function getProductCoreType(prod: {
   note?: string;
   description?: string;
   recipe?: any[];
+  materialCoreCode?: string;
+  materialCoreName?: string;
 }): ProductCoreType {
+  // 00. Nếu sản phẩm đã được cấu hình thủ công mã cốt vật tư (materialCoreCode)
+  if (prod.materialCoreCode) {
+    const mc = prod.materialCoreCode.toUpperCase().trim();
+    if (mc === 'NONE' || mc === 'KHONG' || mc === 'KHONG_COT' || mc === '0') return 'none';
+    if (mc.includes('FOMEX') || (prod.materialCoreName && prod.materialCoreName.toLowerCase().includes('fomex'))) {
+      return 'fomex';
+    }
+    return 'mdf';
+  }
+
   const code = (prod.code || '').toLowerCase().trim();
   const name = (prod.name || '').toLowerCase().trim();
   const note = (prod.note || '').toLowerCase().trim();

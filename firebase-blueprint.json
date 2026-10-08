@@ -136,6 +136,9 @@
     "/combos/{comboId}": {
       "schema": "StudioCombo",
       "description": "Collection of product combos"
+    },
+    "/settings/{settingId}": {
+      "description": "Application settings and quick suggestion presets"
     }
   }
 }

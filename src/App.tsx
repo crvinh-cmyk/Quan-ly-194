@@ -679,6 +679,7 @@ export default function App() {
         {activeTab === 'products' && (
           <ProductCatalogView
             products={products}
+            materials={materials}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}

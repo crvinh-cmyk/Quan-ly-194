@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Product, Customer, Order, OrderItem, Material, ProductCategory, StudioCombo } from '../types';
 import { formatCurrency, formatNumber, getTodayDateString, formatDateVN, numberToVietnameseWords } from '../utils/formatters';
-import { calculateOrderBOM, calculateItemBOM, createMaterialDeductionRecords, extractEffectiveSize, normalizeSize } from '../utils/materialBOM';
+import { calculateOrderBOM, calculateItemBOM, createMaterialDeductionRecords, extractEffectiveSize, normalizeSize, resolveProductCoreMaterial } from '../utils/materialBOM';
 import {
   Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
   ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
@@ -235,6 +235,12 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
       const prodName = ci.productName || (matchedProd ? matchedProd.name : ci.productCode);
       const qty = ci.quantity > 0 ? ci.quantity : 1;
 
+      const resolvedCore = resolveProductCoreMaterial(
+        matchedProd || { code: ci.productCode, name: prodName, size },
+        materials,
+        products
+      );
+
       return {
         id: `row-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 5)}`,
         date: orderDate,
@@ -244,7 +250,10 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
         price: unitPrice,
         quantity: qty,
         amount: qty * unitPrice,
-        note: ci.note || ''
+        note: ci.note || '',
+        materialCoreCode: resolvedCore.materialCoreCode,
+        materialCoreName: resolvedCore.materialCoreName,
+        materialCoreId: resolvedCore.materialCoreId
       };
     });
 
@@ -266,8 +275,9 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
     setTimeout(() => setQuickInsertToast(''), 4000);
   };
 
-  // Auto-fill row when product code matches or is selected
+  // Auto-fill row when product code matches or is selected (TỰ ĐỘNG ĐIỀN ĐƠN GIÁ VÀ CỐT VẬT TƯ CHÍNH XÁC)
   const applyProductToRow = (rowIdx: number, product: Product) => {
+    const resolvedCore = resolveProductCoreMaterial(product, materials, products);
     setItems(prev => {
       const next = [...prev];
       const cur = next[rowIdx];
@@ -280,7 +290,10 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
         size: product.size,
         price: unitPrice,
         quantity: qty,
-        amount: qty * unitPrice
+        amount: qty * unitPrice,
+        materialCoreCode: resolvedCore.materialCoreCode,
+        materialCoreName: resolvedCore.materialCoreName,
+        materialCoreId: resolvedCore.materialCoreId
       };
       return next;
     });
@@ -290,6 +303,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
 
   // Quick-insert a popular product into the invoice table
   const handleQuickInsertPopularProduct = (product: Product) => {
+    const resolvedCore = resolveProductCoreMaterial(product, materials, products);
     setItems(prev => {
       // Look for the first empty row
       const emptyIdx = prev.findIndex(r => !r.productCode.trim() && !r.productName.trim() && (!r.price || r.price === 0));
@@ -306,7 +320,10 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           size: product.size,
           price: unitPrice,
           quantity: qty,
-          amount: qty * unitPrice
+          amount: qty * unitPrice,
+          materialCoreCode: resolvedCore.materialCoreCode,
+          materialCoreName: resolvedCore.materialCoreName,
+          materialCoreId: resolvedCore.materialCoreId
         };
         return next;
       } else {
@@ -320,13 +337,16 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           price: product.price,
           quantity: 1,
           amount: product.price,
-          note: ''
+          note: '',
+          materialCoreCode: resolvedCore.materialCoreCode,
+          materialCoreName: resolvedCore.materialCoreName,
+          materialCoreId: resolvedCore.materialCoreId
         };
         return [...prev, newRow];
       }
     });
 
-    setQuickInsertToast(`+ Đã chèn mã [${product.code}] - ${product.name} (${formatCurrency(product.price)})`);
+    setQuickInsertToast(`+ Đã chèn [${product.code}] - ${product.name} (${formatCurrency(product.price)}) [Cốt: ${resolvedCore.materialCoreCode}]`);
     setTimeout(() => setQuickInsertToast(''), 3000);
   };
 
@@ -357,6 +377,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
 
   // Chọn sản phẩm từ modal bảng giá đưa vào hóa đơn bán hàng
   const handleSelectProductFromCatalog = (product: Product) => {
+    const resolvedCore = resolveProductCoreMaterial(product, materials, products);
     setItems(prev => {
       // Tìm dòng trống đầu tiên
       const emptyIdx = prev.findIndex(r => !r.productCode.trim() && !r.productName.trim() && (!r.price || r.price === 0));
@@ -371,7 +392,10 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           size: product.size,
           price: product.price,
           quantity: qty,
-          amount: qty * product.price
+          amount: qty * product.price,
+          materialCoreCode: resolvedCore.materialCoreCode,
+          materialCoreName: resolvedCore.materialCoreName,
+          materialCoreId: resolvedCore.materialCoreId
         };
         return next;
       } else {
@@ -384,13 +408,16 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           price: product.price,
           quantity: 1,
           amount: product.price,
-          note: ''
+          note: '',
+          materialCoreCode: resolvedCore.materialCoreCode,
+          materialCoreName: resolvedCore.materialCoreName,
+          materialCoreId: resolvedCore.materialCoreId
         };
         return [...prev, newRow];
       }
     });
 
-    setQuickInsertToast(`+ Đã thêm [${product.code}] - ${product.name} (${formatCurrency(product.price)}) vào đơn hàng`);
+    setQuickInsertToast(`+ Đã thêm [${product.code}] - ${product.name} (${formatCurrency(product.price)}) [Cốt: ${resolvedCore.materialCoreCode}] vào đơn hàng`);
     setTimeout(() => setQuickInsertToast(''), 3000);
   };
 
@@ -433,6 +460,15 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
     const exactMatch = products.find(p => p.code.toUpperCase() === upperVal);
     if (exactMatch) {
       applyProductToRow(rowIdx, exactMatch);
+    } else if (popularTier) {
+      // Check if matches converted code for active tier
+      const convertedMatch = products.find(p => {
+        const tierCode = convertProductCodeForTier(p.code, popularTier);
+        return tierCode.toUpperCase() === upperVal;
+      });
+      if (convertedMatch) {
+        applyProductToRow(rowIdx, convertedMatch);
+      }
     }
   };
 
@@ -448,6 +484,24 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
         const q = field === 'quantity' ? Number(val) || 0 : row.quantity;
         row.amount = p * q;
       }
+
+      // If user directly changes or selects materialCoreCode on the row
+      if (field === 'materialCoreCode') {
+        const upper = (val || '').toUpperCase().trim();
+        if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT' || upper === '0') {
+          row.materialCoreCode = 'NONE';
+          row.materialCoreName = 'Không dùng cốt ván';
+          row.materialCoreId = undefined;
+        } else {
+          row.materialCoreCode = upper;
+          const matchedMat = materials.find(m => m.code.toUpperCase() === upper);
+          if (matchedMat) {
+            row.materialCoreName = matchedMat.name;
+            row.materialCoreId = matchedMat.id;
+          }
+        }
+      }
+
       next[rowIdx] = row;
       return next;
     });
@@ -575,14 +629,57 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
       if (!row.quantity || row.quantity <= 0) return;
       if (!row.productCode && !row.productName && !row.size && row.price <= 0) return;
 
-      // Phân loại cốt vật tư:
+      // 1. ƯU TIÊN SỐ 1: Kiểm tra Cốt Vật Tư Tương Thích (materialCoreCode)
+      // Được tự động nhập từ Bảng Giá hoặc chọn thủ công trên dòng hóa đơn
+      const matchedProd = products.find(p => p.code.toUpperCase().trim() === row.productCode.toUpperCase().trim());
+      const explicitCoreCode = (row.materialCoreCode || matchedProd?.materialCoreCode || '').trim();
+      const explicitCoreId = row.materialCoreId || matchedProd?.materialCoreId;
+
+      if (explicitCoreCode) {
+        const upperCore = explicitCoreCode.toUpperCase();
+        // Nếu là NONE -> Tuyệt đối không trừ bất kỳ cốt ván nào
+        if (upperCore === 'NONE' || upperCore === 'KHONG' || upperCore === 'KHONG_COT' || upperCore === '0') {
+          return;
+        }
+
+        // Tìm chính xác vật tư trong kho theo mã hoặc ID
+        const exactMat = materials.find(m => m.code.toUpperCase() === upperCore || (explicitCoreId && m.id === explicitCoreId));
+        if (exactMat) {
+          const override = manualMdfOverrides[row.id];
+          const selectedMat = override?.materialId ? materials.find(m => m.id === override.materialId) || exactMat : exactMat;
+          const qty = override?.quantity !== undefined ? override.quantity : row.quantity;
+          const currentStock = selectedMat.stockQuantity;
+          const remainingStock = Math.round((currentStock - qty) * 100) / 100;
+          const displayTitle = row.productName || row.productCode || `Ảnh dòng #${idx + 1}`;
+
+          list.push({
+            id: `slip-row-${row.id}`,
+            sourceRowId: row.id,
+            sourceItemName: displayTitle,
+            size: row.size || extractEffectiveSize(row.size, row.productName, row.productCode) || 'Tiêu chuẩn',
+            materialId: selectedMat.id,
+            materialCode: selectedMat.code,
+            materialName: selectedMat.name,
+            materialCategory: selectedMat.category,
+            unit: selectedMat.unit || 'Tấm',
+            quantity: qty,
+            currentStock,
+            remainingStock,
+            isManual: false
+          });
+          return;
+        }
+      }
+
+      // 2. Phân loại cốt vật tư dự phòng (Fallback nếu chưa cấu hình mã cốt cụ thể):
       // - 'none': In ảnh, In ép, Khung gia cố (NEP), Album mở phẳng, Photobook... -> BỎ TRỐNG CỐT, KHÔNG TRỪ VÁN
       // - 'fomex': DUY NHẤT dành cho Ảnh 4K và Ảnh HD Pro -> Cốt Fomex 9li siêu nhẹ
       // - 'mdf': Tất cả các dòng ảnh còn lại (HD Gương Siêu Bóng, Lụa Viền, Mika, Lụa Khung, Ép Gỗ, Tráng Gương, Pha Lê...) -> Cốt Ván Gỗ MDF
       const coreType = getProductCoreType({
         code: row.productCode,
         name: row.productName,
-        note: row.note
+        note: row.note,
+        materialCoreCode: explicitCoreCode
       });
 
       if (coreType === 'none') {
@@ -1202,6 +1299,12 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                 <th className="py-2.5 px-3 text-center w-28">
                   Kích thước
                 </th>
+                <th className="py-2.5 px-3 text-center min-w-[145px] text-amber-950">
+                  <span className="flex items-center justify-center gap-1">
+                    <Boxes className="w-3.5 h-3.5 text-amber-700" />
+                    Cốt vật tư (Tự động)
+                  </span>
+                </th>
                 <th className="py-2.5 px-3 text-right w-28">
                   Giá tiền (đ)
                 </th>
@@ -1358,6 +1461,94 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                       placeholder="VD: 60x90"
                       className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden"
                     />
+                  </td>
+
+                  {/* CỘT CỐT VẬT TƯ (Tự động điền theo sản phẩm hoặc cho phép chọn/sửa thủ công) */}
+                  <td className="py-2 px-2 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      {(() => {
+                        const codeUpper = (row.materialCoreCode || '').toUpperCase().trim();
+                        if (codeUpper === 'NONE' || codeUpper === 'KHONG' || codeUpper === 'KHONG_COT' || codeUpper === '0') {
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300"
+                              title="Dòng này KHÔNG DÙNG CỐT VÁN (Bỏ trống, không trừ kho)"
+                            >
+                              🚫 Không cốt
+                            </span>
+                          );
+                        }
+                        if (codeUpper) {
+                          const isFomex = codeUpper.includes('FOMEX') || (row.materialCoreName && row.materialCoreName.toLowerCase().includes('fomex'));
+                          const matchedMat = materials.find(m => m.code.toUpperCase() === codeUpper || m.id === row.materialCoreId);
+                          return (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-2xs ${
+                                isFomex
+                                  ? 'bg-sky-50 text-sky-900 border-sky-300'
+                                  : 'bg-amber-50 text-amber-900 border-amber-300'
+                              }`}
+                              title={matchedMat ? `${matchedMat.name} (Tồn kho: ${matchedMat.stockQuantity} ${matchedMat.unit})` : row.materialCoreName || codeUpper}
+                            >
+                              <span>{isFomex ? '✨' : '🪵'}</span>
+                              <span className="font-mono font-bold">{codeUpper}</span>
+                            </span>
+                          );
+                        }
+
+                        // Nếu chưa có trên dòng, hiển thị trạng thái chờ hoặc tự động
+                        if (!row.productCode && !row.productName) {
+                          return <span className="text-slate-400 text-[10px] italic">—</span>;
+                        }
+
+                        return (
+                          <span className="text-[10px] text-amber-800 font-medium italic">
+                            ⚙️ Tự động
+                          </span>
+                        );
+                      })()}
+
+                      {/* Dropdown / quick selector to change core material if needed for this row */}
+                      {materials.length > 0 && (row.productCode || row.productName) && (
+                        <select
+                          value={row.materialCoreCode?.toUpperCase() === 'NONE' ? 'NONE' : (row.materialCoreCode || '')}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'NONE') {
+                              handleRowChange(idx, 'materialCoreCode', 'NONE');
+                            } else if (val) {
+                              const m = materials.find(mat => mat.code.toUpperCase() === val.toUpperCase());
+                              handleRowChange(idx, 'materialCoreCode', val);
+                              if (m) {
+                                handleRowChange(idx, 'materialCoreName', m.name);
+                                handleRowChange(idx, 'materialCoreId', m.id);
+                              }
+                            } else {
+                              handleRowChange(idx, 'materialCoreCode', '');
+                            }
+                          }}
+                          className="w-5 h-6 opacity-60 hover:opacity-100 transition cursor-pointer text-[10px] bg-transparent border-0 outline-hidden text-slate-500"
+                          title="Đổi loại cốt vật tư cho dòng này"
+                        >
+                          <option value="">⚙️ Đổi cốt...</option>
+                          <option value="NONE">🚫 Không dùng cốt (Bỏ trống)</option>
+                          <optgroup label="🪵 Ván Gỗ MDF">
+                            {materials.filter(m => m.category === 'Gỗ MDF').map(m => (
+                              <option key={m.id} value={m.code.toUpperCase()}>
+                                {m.code} - {m.name} (Còn {m.stockQuantity} {m.unit})
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="✨ Fomex Siêu Nhẹ 9li">
+                            {materials.filter(m => m.category === 'Fomex siêu nhẹ').map(m => (
+                              <option key={m.id} value={m.code.toUpperCase()}>
+                                {m.code} - {m.name} (Còn {m.stockQuantity} {m.unit})
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      )}
+                    </div>
                   </td>
 
                   {/* 5. CỘT GIÁ TIỀN */}

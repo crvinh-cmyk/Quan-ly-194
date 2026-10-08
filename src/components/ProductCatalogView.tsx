@@ -1,13 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Product, ProductCategory } from '../types';
+import { Product, ProductCategory, Material } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import {
   Plus, Search, Edit2, Trash2, Tag, Check, Sparkles,
   AlertCircle, CheckCircle2, X, Building2, Camera, User,
-  Printer, Copy, BarChart3, Filter, CheckCircle, Info
+  Printer, Copy, BarChart3, Filter, CheckCircle, Info, Boxes, Settings
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 import { DEFAULT_WORKSHOP_INFO, STANDARD_PHOTO_SIZES } from '../data/initialData';
+import { normalizeSize } from '../utils/materialBOM';
 
 import {
   ProductCoreType,
@@ -120,6 +121,7 @@ export function getEstimatedFramedPrice(matKey: FramedMaterialKey, frameKey: Fra
 
 interface ProductCatalogViewProps {
   products: Product[];
+  materials?: Material[];
   onAddProduct: (product: Product) => void;
   onUpdateProduct: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
@@ -128,6 +130,7 @@ interface ProductCatalogViewProps {
 
 export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
   products,
+  materials = [],
   onAddProduct,
   onUpdateProduct,
   onDeleteProduct,
@@ -161,6 +164,81 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [printCategory, setPrintCategory] = useState<ProductCategory | 'all'>('GIÁ STUDIO');
 
+  // Quick Core Material Modal state (Chỉnh sửa nhanh mã cốt vật tư tương thích trực tiếp trên bảng giá)
+  const [quickCoreProduct, setQuickCoreProduct] = useState<Product | null>(null);
+  const [quickCoreCodeInput, setQuickCoreCodeInput] = useState('');
+  const [syncCoreAcrossTiers, setSyncCoreAcrossTiers] = useState(true);
+
+  const handleOpenQuickCore = (p: Product) => {
+    setQuickCoreProduct(p);
+    setQuickCoreCodeInput(p.materialCoreCode || '');
+    setSyncCoreAcrossTiers(true);
+  };
+
+  const handleSaveQuickCore = () => {
+    if (!quickCoreProduct) return;
+    const rawCode = quickCoreCodeInput.trim();
+    let finalCode: string | undefined = undefined;
+    let finalName: string | undefined = undefined;
+    let finalId: string | undefined = undefined;
+
+    if (rawCode) {
+      const upper = rawCode.toUpperCase();
+      if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT' || upper === '0') {
+        finalCode = 'NONE';
+        finalName = 'Không dùng cốt ván';
+      } else {
+        finalCode = upper;
+        const matched = materials.find(m => m.code.toUpperCase() === upper);
+        finalName = matched?.name || quickCoreProduct.materialCoreName || upper;
+        finalId = matched?.id;
+      }
+    }
+
+    const updatedTarget: Product = {
+      ...quickCoreProduct,
+      materialCoreCode: finalCode,
+      materialCoreName: finalName,
+      materialCoreId: finalId
+    };
+
+    if (syncCoreAcrossTiers) {
+      const baseCode = convertProductCodeForTier(quickCoreProduct.code, 'GIÁ STUDIO');
+      const relatedProducts = products.filter(p => {
+        if (p.id === quickCoreProduct.id) return false;
+        const pBase = convertProductCodeForTier(p.code, 'GIÁ STUDIO');
+        return (
+          pBase === baseCode ||
+          (p.size === quickCoreProduct.size &&
+            p.name.replace(/\((GIÁ STUDIO|Freelance|Khách Lẻ)\)/gi, '').trim() ===
+              quickCoreProduct.name.replace(/\((GIÁ STUDIO|Freelance|Khách Lẻ)\)/gi, '').trim())
+        );
+      });
+
+      const batchUpdates = [
+        updatedTarget,
+        ...relatedProducts.map(p => ({
+          ...p,
+          materialCoreCode: finalCode,
+          materialCoreName: finalName,
+          materialCoreId: finalId
+        }))
+      ];
+
+      if (onBatchSaveProducts) {
+        onBatchSaveProducts(batchUpdates);
+      } else {
+        batchUpdates.forEach(p => onUpdateProduct(p));
+      }
+      showToast(`Đã đồng bộ cốt [${finalCode || 'Tự động'}] cho ${batchUpdates.length} mã sản phẩm tương thích!`);
+    } else {
+      onUpdateProduct(updatedTarget);
+      showToast(`Đã cập nhật cốt [${finalCode || 'Tự động'}] cho mã "${quickCoreProduct.code}"!`);
+    }
+
+    setQuickCoreProduct(null);
+  };
+
   // Success toast message
   const [toastMessage, setToastMessage] = useState('');
 
@@ -171,6 +249,9 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
   const [price, setPrice] = useState<number>(0);
   const [category, setCategory] = useState<ProductCategory>('GIÁ STUDIO');
   const [unit, setUnit] = useState('tấm');
+  const [materialCoreCode, setMaterialCoreCode] = useState('');
+  const [materialCoreName, setMaterialCoreName] = useState('');
+  const [materialCoreId, setMaterialCoreId] = useState('');
 
   // Preset selector state in modal (Mới: Hỗ trợ tạo nhanh ảnh có khung và bo viền)
   const [presetTab, setPresetTab] = useState<'framed' | 'unframed'>('framed');
@@ -216,6 +297,9 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
     setSize('');
     setPrice(0);
     setUnit('tấm');
+    setMaterialCoreCode('');
+    setMaterialCoreName('');
+    setMaterialCoreId('');
     setModalError('');
     setPresetTab('framed');
     setSelectedFramedMat('lk');
@@ -231,6 +315,9 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
     setPrice(p.price);
     setCategory((p.category as ProductCategory) || 'GIÁ STUDIO');
     setUnit(p.unit || 'tấm');
+    setMaterialCoreCode(p.materialCoreCode || '');
+    setMaterialCoreName(p.materialCoreName || '');
+    setMaterialCoreId(p.materialCoreId || '');
     setModalError('');
     setIsModalOpen(true);
   };
@@ -305,7 +392,10 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
       size: sourceProduct.size,
       price: Number(targetPrice) || 0,
       category: targetCategory,
-      unit: sourceProduct.unit || 'tấm'
+      unit: sourceProduct.unit || 'tấm',
+      materialCoreCode: sourceProduct.materialCoreCode,
+      materialCoreName: sourceProduct.materialCoreName,
+      materialCoreId: sourceProduct.materialCoreId
     });
 
     setCloneModalOpen(false);
@@ -320,6 +410,22 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
     }
 
     const cleanCode = code.trim();
+    const trimmedCore = materialCoreCode.trim();
+    let finalCoreCode: string | undefined = undefined;
+    let finalCoreName: string | undefined = undefined;
+    let finalCoreId: string | undefined = undefined;
+
+    if (trimmedCore) {
+      if (trimmedCore.toUpperCase() === 'NONE' || trimmedCore.toUpperCase() === 'KHONG' || trimmedCore.toUpperCase() === 'KHONG_COT') {
+        finalCoreCode = 'NONE';
+        finalCoreName = 'Không dùng cốt ván';
+      } else {
+        finalCoreCode = trimmedCore.toUpperCase();
+        const matchedMat = materials.find(m => m.code.toUpperCase() === finalCoreCode || m.id === materialCoreId);
+        finalCoreName = matchedMat?.name || materialCoreName.trim() || undefined;
+        finalCoreId = matchedMat?.id || materialCoreId || undefined;
+      }
+    }
 
     if (editingProduct) {
       onUpdateProduct({
@@ -329,7 +435,10 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
         size: size.trim(),
         price: Number(price) || 0,
         category,
-        unit: unit.trim() || 'tấm'
+        unit: unit.trim() || 'tấm',
+        materialCoreCode: finalCoreCode,
+        materialCoreName: finalCoreName,
+        materialCoreId: finalCoreId
       });
       showToast(`Đã cập nhật mã sản phẩm "${cleanCode}" (${category}) thành công!`);
     } else {
@@ -347,7 +456,10 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
         size: size.trim(),
         price: Number(price) || 0,
         category,
-        unit: unit.trim() || 'tấm'
+        unit: unit.trim() || 'tấm',
+        materialCoreCode: finalCoreCode,
+        materialCoreName: finalCoreName,
+        materialCoreId: finalCoreId
       });
       showToast(`Đã thêm mới mã sản phẩm "${cleanCode}" vào bảng "${category}" thành công!`);
     }
@@ -1038,19 +1150,62 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                         {row.size}
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        {row.coreType === 'none' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200" title="In & In ép không dùng cốt gỗ MDF (bỏ trống)">
-                            — Không dùng cốt
-                          </span>
-                        ) : row.coreType === 'fomex' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200" title="Chỉ dùng cho Ảnh 4K & HD Pro: Cốt Fomex siêu nhẹ dạng 9 li">
-                            ✨ Fomex 9li (4K & HD Pro)
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200" title="HD gương siêu bóng, lụa viền & mika dùng cốt Gỗ MDF">
-                            🪵 Gỗ MDF
-                          </span>
-                        )}
+                        <div className="flex items-center justify-center gap-1.5">
+                          {(() => {
+                            const repProd = row.studio || row.freelance || row.retail;
+                            const explicitCode = repProd?.materialCoreCode;
+                            if (explicitCode) {
+                              const upper = explicitCode.toUpperCase().trim();
+                              if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT') {
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                                    🚫 Không cốt (NONE)
+                                  </span>
+                                );
+                              }
+                              const isFomex = upper.includes('FOMEX') || (repProd.materialCoreName && repProd.materialCoreName.toLowerCase().includes('fomex'));
+                              return (
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${isFomex ? 'bg-sky-50 text-sky-800 border-sky-300' : 'bg-amber-50 text-amber-900 border-amber-300'}`}>
+                                  <span>{isFomex ? '✨' : '🪵'}</span>
+                                  <span className="font-mono font-bold">{explicitCode}</span>
+                                </span>
+                              );
+                            }
+                            if (row.coreType === 'none') {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200" title="In & In ép không dùng cốt gỗ MDF (bỏ trống)">
+                                  — Không dùng cốt
+                                </span>
+                              );
+                            }
+                            if (row.coreType === 'fomex') {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200" title="Chỉ dùng cho Ảnh 4K & HD Pro: Cốt Fomex siêu nhẹ dạng 9 li">
+                                  ✨ Fomex 9li (4K/HD)
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200" title="HD gương siêu bóng, lụa viền & mika dùng cốt Gỗ MDF">
+                                🪵 Gỗ MDF
+                              </span>
+                            );
+                          })()}
+                          {(() => {
+                            const repProd = row.studio || row.freelance || row.retail;
+                            if (!repProd) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenQuickCore(repProd)}
+                                className="p-1 text-slate-400 hover:text-amber-800 hover:bg-amber-100 rounded-md transition cursor-pointer"
+                                title="Gán / Nhập thủ công mã cốt vật tư tương thích cho dòng sản phẩm này"
+                              >
+                                <Settings className="w-3.5 h-3.5" />
+                              </button>
+                            );
+                          })()}
+                        </div>
                       </td>
 
                       {/* Giá Studio */}
@@ -1129,7 +1284,12 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                   <th className="py-2.5 px-3 w-36 text-amber-900 font-mono">Mã sản phẩm</th>
                   <th className="py-2.5 px-3">Tên hàng hóa / Quy cách hoàn thiện</th>
                   <th className="py-2.5 px-3 text-center w-28">Kích thước</th>
-                  <th className="py-2.5 px-3 text-center w-36">Cốt vật tư</th>
+                  <th className="py-2.5 px-3 text-center w-52 text-amber-950">
+                    <span className="flex items-center justify-center gap-1">
+                      <Boxes className="w-3.5 h-3.5 text-amber-700" />
+                      Cốt vật tư (Kho)
+                    </span>
+                  </th>
                   <th className="py-2.5 px-3 text-center w-36">Phân loại bảng giá</th>
                   <th className="py-2.5 px-3 text-right w-36">Đơn giá áp dụng</th>
                   <th className="py-2.5 px-3 text-center w-28">Thao tác</th>
@@ -1152,28 +1312,83 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                         {prod.size}
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        {coreType === 'none' ? (
-                          <span
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200"
-                            title="In và In ép không dùng cốt gỗ MDF (bỏ trống)"
+                        <div className="flex items-center justify-center gap-1.5">
+                          {(() => {
+                            if (prod.materialCoreCode) {
+                              const upper = prod.materialCoreCode.toUpperCase().trim();
+                              if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT') {
+                                return (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 shadow-2xs"
+                                    title="Sản phẩm này cấu hình KHÔNG DÙNG CỐT VÁN (Bỏ trống cốt, không trừ kho)"
+                                  >
+                                    🚫 Không cốt (NONE)
+                                  </span>
+                                );
+                              }
+                              const matched = materials.find(m => m.code.toUpperCase() === upper || m.id === prod.materialCoreId);
+                              const isFomex = upper.includes('FOMEX') || (prod.materialCoreName && prod.materialCoreName.toLowerCase().includes('fomex'));
+                              return (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border shadow-2xs ${
+                                    isFomex
+                                      ? 'bg-sky-50 text-sky-800 border-sky-300'
+                                      : 'bg-amber-50 text-amber-900 border-amber-300'
+                                  }`}
+                                  title={matched ? `${matched.name} (Tồn kho: ${matched.stockQuantity} ${matched.unit})` : prod.materialCoreName || prod.materialCoreCode}
+                                >
+                                  <span>{isFomex ? '✨' : '🪵'}</span>
+                                  <span className="font-mono font-black">{prod.materialCoreCode}</span>
+                                  {matched && (
+                                    <span className="text-[9px] text-slate-500 font-normal">
+                                      ({matched.stockQuantity} {matched.unit})
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            }
+
+                            // Chưa cấu hình thủ công -> hiển thị theo quy chuẩn tự động
+                            if (coreType === 'none') {
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200"
+                                  title="In và In ép không dùng cốt gỗ MDF (bỏ trống)"
+                                >
+                                  — Không cốt
+                                </span>
+                              );
+                            }
+                            if (coreType === 'fomex') {
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50/70 text-sky-700 border border-dashed border-sky-300"
+                                  title="Tự động bóc tách Fomex 9li theo quy cách"
+                                >
+                                  ✨ Fomex 9li (Tự động)
+                                </span>
+                              );
+                            }
+                            return (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50/70 text-amber-800 border border-dashed border-amber-300"
+                                title="Tự động bóc tách Ván MDF theo quy cách"
+                              >
+                                🪵 Ván MDF (Tự động)
+                              </span>
+                            );
+                          })()}
+
+                          {/* Nút bấm chỉnh sửa/gán nhanh mã cốt vật tư tương thích */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenQuickCore(prod)}
+                            className="p-1 text-slate-400 hover:text-amber-800 hover:bg-amber-100 rounded-md transition cursor-pointer"
+                            title="Gán / Nhập thủ công mã cốt vật tư tương thích cho mã này"
                           >
-                            — Bỏ trống (Không cốt)
-                          </span>
-                        ) : coreType === 'fomex' ? (
-                          <span
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200"
-                            title="Dòng ảnh 4K & HD Pro dùng Cốt Fomex siêu nhẹ dạng 9 li"
-                          >
-                            ✨ Fomex 9li
-                          </span>
-                        ) : (
-                          <span
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200"
-                            title="Ảnh HD Gương Siêu Bóng, Lụa Viền & Mika dùng Cốt Gỗ MDF"
-                          >
-                            🪵 Gỗ MDF
-                          </span>
-                        )}
+                            <Settings className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         {prod.category === 'GIÁ STUDIO' ? (
@@ -2029,27 +2244,179 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                 />
               </div>
 
-              {/* Core Material Info Callout */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] space-y-1">
-                <div className="font-bold text-slate-800 flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5 text-slate-500" />
-                  Quy chuẩn cốt vật tư áp dụng:
+              {/* Core Material Configuration (Cốt vật tư tương thích liên kết trừ kho) */}
+              <div className="p-3.5 bg-amber-50/60 border border-amber-300 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
+                    <Boxes className="w-4 h-4 text-amber-700" />
+                    <span>Cốt Vật Tư Tương Thích (Liên Kết Trừ Kho)</span>
+                  </label>
+                  <span className="text-[11px] text-amber-800 font-semibold">
+                    {materialCoreCode.toUpperCase() === 'NONE'
+                      ? '🚫 Không trừ cốt'
+                      : materialCoreCode.trim()
+                      ? `🪵 Mã cốt: ${materialCoreCode.toUpperCase()}`
+                      : '⚙️ Theo quy chuẩn tự động'}
+                  </span>
                 </div>
-                {getProductCoreType({ code, name }) === 'none' && (
-                  <p className="text-slate-600">
-                    🔹 Mã này thuộc dòng <strong>In</strong>, <strong>In Ép</strong>, <strong>Album Mở Phẳng</strong> hoặc <strong>Khung Gia Cố (NEPST)</strong>: <span className="font-bold text-slate-800">Không dùng cốt gỗ MDF (bỏ trống)</span>.
-                  </p>
-                )}
-                {getProductCoreType({ code, name }) === 'fomex' && (
-                  <p className="text-sky-800">
-                    ✨ Mã này thuộc dòng <strong>Ảnh 4K hoặc Ảnh HD Pro</strong>: Tự động dùng cốt <span className="font-bold">Fomex siêu nhẹ dạng 9 li</span>.
-                  </p>
-                )}
-                {getProductCoreType({ code, name }) === 'mdf' && (
-                  <p className="text-amber-800">
-                    🪵 Mã này thuộc dòng <strong>Ảnh Có Khung (Lụa Khung LK, Mika Khung MK, HD Gương Khung HD) hoặc Bo Viền (HD Gương Siêu Bóng / Lụa Viền / Mika Bo Viền / Ép Gỗ)</strong>: Tự động dùng cốt <span className="font-bold">Ván Gỗ MDF lõi xanh chống ẩm</span>.
-                  </p>
-                )}
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={materialCoreCode}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setMaterialCoreCode(val);
+                      const m = materials.find(mat => mat.code.toUpperCase() === val.trim());
+                      if (m) {
+                        setMaterialCoreName(m.name);
+                        setMaterialCoreId(m.id);
+                      }
+                    }}
+                    placeholder="Nhập mã vật tư kho (VD: VT-GO-6090, VT-FOMEX-6090) hoặc NONE..."
+                    className="flex-1 px-3 py-2 font-mono font-bold text-xs bg-white border border-amber-300 rounded-xl outline-hidden focus:ring-2 focus:ring-amber-500 uppercase"
+                  />
+                  {materials.length > 0 && (
+                    <select
+                      value={materialCoreCode.toUpperCase() === 'NONE' ? 'NONE' : (materials.some(m => m.code.toUpperCase() === materialCoreCode.toUpperCase()) ? materialCoreCode.toUpperCase() : '')}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) {
+                          setMaterialCoreCode('');
+                          setMaterialCoreName('');
+                          setMaterialCoreId('');
+                        } else if (val === 'NONE') {
+                          setMaterialCoreCode('NONE');
+                          setMaterialCoreName('Không dùng cốt ván');
+                          setMaterialCoreId('');
+                        } else {
+                          const m = materials.find(mat => mat.code.toUpperCase() === val);
+                          if (m) {
+                            setMaterialCoreCode(m.code);
+                            setMaterialCoreName(m.name);
+                            setMaterialCoreId(m.id);
+                          }
+                        }
+                      }}
+                      className="px-2.5 py-2 text-xs font-semibold bg-white border border-amber-300 rounded-xl outline-hidden text-slate-800 shrink-0"
+                    >
+                      <option value="">-- Chọn từ Kho Vật Tư --</option>
+                      <option value="NONE">🚫 Không dùng cốt (Bỏ trống)</option>
+                      <optgroup label="🪵 Ván Gỗ MDF">
+                        {materials.filter(m => m.category === 'Gỗ MDF').map(m => (
+                          <option key={m.id} value={m.code.toUpperCase()}>
+                            {m.code} - {m.name} (Còn {m.stockQuantity} {m.unit})
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="✨ Fomex Siêu Nhẹ 9li">
+                        {materials.filter(m => m.category === 'Fomex siêu nhẹ').map(m => (
+                          <option key={m.id} value={m.code.toUpperCase()}>
+                            {m.code} - {m.name} (Còn {m.stockQuantity} {m.unit})
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  )}
+                </div>
+
+                {/* Quick recommendation chips based on size */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  <span className="text-[10px] text-slate-500 font-bold">Gợi ý nhanh theo cỡ:</span>
+                  {(() => {
+                    const normSize = normalizeSize(size || code || name);
+                    const suggestedMdf = materials.find(m => m.category === 'Gỗ MDF' && normSize && normalizeSize(m.code).includes(normSize)) || materials.find(m => m.category === 'Gỗ MDF');
+                    const suggestedFomex = materials.find(m => m.category === 'Fomex siêu nhẹ' && normSize && normalizeSize(m.code).includes(normSize)) || materials.find(m => m.category === 'Fomex siêu nhẹ');
+
+                    return (
+                      <>
+                        {suggestedMdf && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMaterialCoreCode(suggestedMdf.code);
+                              setMaterialCoreName(suggestedMdf.name);
+                              setMaterialCoreId(suggestedMdf.id);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                              materialCoreCode.toUpperCase() === suggestedMdf.code.toUpperCase()
+                                ? 'bg-amber-600 text-white border-amber-600'
+                                : 'bg-white hover:bg-amber-100 text-amber-900 border-amber-300'
+                            }`}
+                          >
+                            🪵 Gán MDF ({suggestedMdf.code})
+                          </button>
+                        )}
+                        {suggestedFomex && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMaterialCoreCode(suggestedFomex.code);
+                              setMaterialCoreName(suggestedFomex.name);
+                              setMaterialCoreId(suggestedFomex.id);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                              materialCoreCode.toUpperCase() === suggestedFomex.code.toUpperCase()
+                                ? 'bg-sky-600 text-white border-sky-600'
+                                : 'bg-white hover:bg-sky-100 text-sky-900 border-sky-300'
+                            }`}
+                          >
+                            ✨ Gán Fomex ({suggestedFomex.code})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMaterialCoreCode('NONE');
+                            setMaterialCoreName('Không dùng cốt');
+                            setMaterialCoreId('');
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                            materialCoreCode.toUpperCase() === 'NONE'
+                              ? 'bg-slate-700 text-white border-slate-700'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                          }`}
+                        >
+                          🚫 Không cốt (NONE)
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Status indicator */}
+                {(() => {
+                  const upper = materialCoreCode.toUpperCase().trim();
+                  if (!upper) {
+                    return (
+                      <p className="text-[11px] text-slate-500 italic">
+                        💡 Nếu để trống, hệ thống sẽ tự động bóc tách cốt ván MDF hoặc Fomex 9li theo tên/mã sản phẩm.
+                      </p>
+                    );
+                  }
+                  if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT') {
+                    return (
+                      <p className="text-[11px] text-slate-700 font-medium">
+                        🚫 Sản phẩm này sẽ <strong>không trừ bất kỳ cốt ván nào</strong> trong kho khi bán hàng.
+                      </p>
+                    );
+                  }
+                  const matched = materials.find(m => m.code.toUpperCase() === upper || m.id === materialCoreId);
+                  if (matched) {
+                    return (
+                      <p className="text-[11px] text-emerald-800 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Khớp vật tư kho: <strong>{matched.name}</strong> • Tồn kho: <span className="font-mono text-emerald-700">{matched.stockQuantity} {matched.unit}</span></span>
+                      </p>
+                    );
+                  }
+                  return (
+                    <p className="text-[11px] text-amber-800 font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Mã cốt tự nhập: <strong>{upper}</strong> (khi bán hàng sẽ trừ vật tư có mã này trong kho)</span>
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Unit & Price */}
@@ -2247,6 +2614,251 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                   Xác Nhận Sao Chép & Paste Sang Freelance (+10%)
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* QUICK CORE MATERIAL CONFIGURATION MODAL                  */}
+      {/* ======================================================== */}
+      {quickCoreProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col overflow-hidden border border-amber-300 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-4 bg-gradient-to-r from-amber-700 via-amber-800 to-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-600/60 rounded-xl">
+                  <Boxes className="w-5 h-5 text-amber-200" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 text-white">
+                    Cấu Hình Cốt Vật Tư Tương Thích
+                  </h3>
+                  <p className="text-[11px] text-amber-200 mt-0.5">
+                    Mã: <strong className="font-mono text-white bg-amber-900/80 px-1.5 py-0.5 rounded">{quickCoreProduct.code}</strong> — {quickCoreProduct.name} ({quickCoreProduct.size})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickCoreProduct(null)}
+                className="text-amber-200 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-5 space-y-4 text-xs">
+              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-amber-950">
+                <p className="font-semibold text-[11px] leading-relaxed">
+                  💡 <strong>Quy tắc hoạt động:</strong> Khi lập hóa đơn bán hàng, chọn sản phẩm này thì hệ thống sẽ <strong>tự động nhập cốt vật tư tương thích</strong> được cấu hình tại đây, giúp trừ chính xác số ván MDF hoặc Fomex trong kho!
+                </p>
+              </div>
+
+              {/* Manual Input */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  Nhập Thủ Công Mã Cốt Vật Tư Kho Tương Thích:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={quickCoreCodeInput}
+                    onChange={(e) => setQuickCoreCodeInput(e.target.value.toUpperCase())}
+                    placeholder="VD: VT-GO-6090, VT-GO-6090-9LI, VT-FOMEX-6090 hoặc NONE..."
+                    className="flex-1 px-3 py-2.5 font-mono font-bold text-sm bg-white border border-amber-300 rounded-xl outline-hidden focus:ring-2 focus:ring-amber-500 uppercase"
+                  />
+                  {quickCoreCodeInput && (
+                    <button
+                      type="button"
+                      onClick={() => setQuickCoreCodeInput('')}
+                      className="px-2.5 py-2 text-xs text-slate-500 hover:text-red-600 hover:bg-slate-100 rounded-lg cursor-pointer font-bold"
+                      title="Xóa trắng để về quy chuẩn tự động"
+                    >
+                      Xóa
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Select from Warehouse Materials */}
+              {materials.length > 0 && (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Hoặc Chọn Nhanh Từ Danh Sách Kho Vật Tư Hiện Có:
+                  </label>
+                  <select
+                    value={quickCoreCodeInput.toUpperCase() === 'NONE' ? 'NONE' : (materials.some(m => m.code.toUpperCase() === quickCoreCodeInput.toUpperCase()) ? quickCoreCodeInput.toUpperCase() : '')}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) {
+                        setQuickCoreCodeInput('');
+                      } else {
+                        setQuickCoreCodeInput(val.toUpperCase());
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-xs font-semibold bg-white border border-amber-300 rounded-xl outline-hidden text-slate-800"
+                  >
+                    <option value="">-- Bấm chọn mã từ kho vật tư --</option>
+                    <option value="NONE">🚫 Không dùng cốt ván (NONE - Bỏ trống, không trừ kho)</option>
+                    <optgroup label="🪵 Ván Gỗ MDF Lõi Xanh">
+                      {materials.filter(m => m.category === 'Gỗ MDF').map(m => (
+                        <option key={m.id} value={m.code.toUpperCase()}>
+                          {m.code} — {m.name} (Tồn: {m.stockQuantity} {m.unit})
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="✨ Fomex Siêu Nhẹ 9li">
+                      {materials.filter(m => m.category === 'Fomex siêu nhẹ').map(m => (
+                        <option key={m.id} value={m.code.toUpperCase()}>
+                          {m.code} — {m.name} (Tồn: {m.stockQuantity} {m.unit})
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+              )}
+
+              {/* Quick Chips by Size */}
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold block mb-1">Thẻ gợi ý gán nhanh theo khổ {quickCoreProduct.size}:</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(() => {
+                    const normSize = normalizeSize(quickCoreProduct.size || quickCoreProduct.code || quickCoreProduct.name);
+                    const suggestedMdf = materials.find(m => m.category === 'Gỗ MDF' && normSize && normalizeSize(m.code).includes(normSize)) || materials.find(m => m.category === 'Gỗ MDF');
+                    const suggestedMdf9li = materials.find(m => m.category === 'Gỗ MDF' && m.code.includes('9LI') && normSize && normalizeSize(m.code).includes(normSize));
+                    const suggestedFomex = materials.find(m => m.category === 'Fomex siêu nhẹ' && normSize && normalizeSize(m.code).includes(normSize)) || materials.find(m => m.category === 'Fomex siêu nhẹ');
+
+                    return (
+                      <>
+                        {suggestedMdf && (
+                          <button
+                            type="button"
+                            onClick={() => setQuickCoreCodeInput(suggestedMdf.code.toUpperCase())}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                              quickCoreCodeInput.toUpperCase() === suggestedMdf.code.toUpperCase()
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                : 'bg-white hover:bg-amber-50 text-amber-900 border-amber-300'
+                            }`}
+                          >
+                            🪵 MDF {suggestedMdf.code}
+                          </button>
+                        )}
+                        {suggestedMdf9li && suggestedMdf9li.code !== suggestedMdf?.code && (
+                          <button
+                            type="button"
+                            onClick={() => setQuickCoreCodeInput(suggestedMdf9li.code.toUpperCase())}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                              quickCoreCodeInput.toUpperCase() === suggestedMdf9li.code.toUpperCase()
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                : 'bg-white hover:bg-amber-50 text-amber-900 border-amber-300'
+                            }`}
+                          >
+                            🪵 MDF 9li ({suggestedMdf9li.code})
+                          </button>
+                        )}
+                        {suggestedFomex && (
+                          <button
+                            type="button"
+                            onClick={() => setQuickCoreCodeInput(suggestedFomex.code.toUpperCase())}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                              quickCoreCodeInput.toUpperCase() === suggestedFomex.code.toUpperCase()
+                                ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                                : 'bg-white hover:bg-sky-50 text-sky-900 border-sky-300'
+                            }`}
+                          >
+                            ✨ Fomex ({suggestedFomex.code})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setQuickCoreCodeInput('NONE')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                            quickCoreCodeInput.toUpperCase() === 'NONE'
+                              ? 'bg-slate-700 text-white border-slate-700 shadow-xs'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                          }`}
+                        >
+                          🚫 Không cốt (NONE)
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Status preview */}
+              {(() => {
+                const upper = quickCoreCodeInput.toUpperCase().trim();
+                if (!upper) {
+                  return (
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-[11px]">
+                      ⚙️ <strong>Chế độ tự động:</strong> Hệ thống sẽ tự động bóc tách ván MDF hoặc Fomex 9li theo tên/mã sản phẩm.
+                    </div>
+                  );
+                }
+                if (upper === 'NONE' || upper === 'KHONG' || upper === 'KHONG_COT' || upper === '0') {
+                  return (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-[11px] font-medium flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Sản phẩm này sẽ <strong>không trừ bất kỳ tấm cốt ván nào</strong> trong kho vật tư khi bán hàng.</span>
+                    </div>
+                  );
+                }
+                const matched = materials.find(m => m.code.toUpperCase() === upper);
+                if (matched) {
+                  return (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950 text-[11px] font-semibold flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Khớp kho: <strong>{matched.name}</strong></span>
+                      </div>
+                      <span className="font-mono text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                        Tồn: {matched.stockQuantity} {matched.unit}
+                      </span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px]">
+                    ⚠️ Mã vật tư <strong>[{upper}]</strong> chưa có trong kho hiện tại (hệ thống vẫn ghi nhận mã này khi trừ kho).
+                  </div>
+                );
+              })()}
+
+              {/* Sync across tiers checkbox */}
+              <label className="flex items-center gap-2 p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={syncCoreAcrossTiers}
+                  onChange={(e) => setSyncCoreAcrossTiers(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span className="text-[11px] font-bold text-indigo-950">
+                  Đồng bộ mã cốt này cho tất cả bảng giá (Studio, Freelance, Khách Lẻ) của sản phẩm này
+                </span>
+              </label>
+            </div>
+
+            {/* Footer */}
+            <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setQuickCoreProduct(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickCore}
+                className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 rounded-xl shadow-md transition cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                Lưu Cốt Vào Hệ Thống
+              </button>
             </div>
           </div>
         </div>
