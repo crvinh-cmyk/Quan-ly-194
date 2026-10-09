@@ -8,7 +8,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo } from '../types';
+import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo, ProductCostItem, ProductCostMap } from '../types';
 import { DEFAULT_WORKSHOP_INFO } from '../data/initialData';
 
 // User info interface for tagging created/updated records
@@ -634,4 +634,69 @@ export async function saveInventoryPresetsToFirestore(
   const enriched = attachUserInfo(payload, user);
   await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
 }
+
+// =================================================================
+// 9. PRODUCT COSTS BREAKDOWN (ĐỊNH MỨC GIÁ VỐN THEO MÃ SẢN PHẨM)
+// =================================================================
+const PRODUCT_COSTS_LOCAL_KEY = 'xuongin194_product_costs_v1';
+
+export function getLocalProductCosts(): ProductCostMap {
+  try {
+    const raw = localStorage.getItem(PRODUCT_COSTS_LOCAL_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) {
+    return {};
+  }
+}
+
+export function saveLocalProductCosts(costs: ProductCostMap): void {
+  try {
+    localStorage.setItem(PRODUCT_COSTS_LOCAL_KEY, JSON.stringify(costs));
+  } catch (e) {
+    console.error('Error saving local product costs:', e);
+  }
+}
+
+/**
+ * Lắng nghe thời gian thực (Real-time listener) bảng định mức giá vốn của từng mã sản phẩm
+ */
+export function subscribeProductCosts(
+  onData: (costs: ProductCostMap) => void,
+  onError?: (err: Error) => void
+) {
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'product_costs');
+  return onSnapshot(docRef, { includeMetadataChanges: false }, (snapshot) => {
+    if (snapshot.exists()) {
+      const raw = snapshot.data();
+      const costs: ProductCostMap = (raw.costs && typeof raw.costs === 'object') ? raw.costs : {};
+      saveLocalProductCosts(costs);
+      onData(costs);
+    } else {
+      const initial = getLocalProductCosts();
+      onData(initial);
+    }
+  }, (error) => {
+    console.error('Firestore product_costs onSnapshot error:', error);
+    if (onError) onError(error);
+  });
+}
+
+/**
+ * Lưu bảng định mức chi phí giá vốn lên Firestore
+ */
+export async function saveProductCostsToFirestore(
+  costs: ProductCostMap,
+  user?: AuthUserContext | null
+): Promise<void> {
+  saveLocalProductCosts(costs);
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'product_costs');
+  const payload = {
+    costs,
+    updatedAt: new Date().toISOString()
+  };
+  const enriched = attachUserInfo(payload, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+}
+
 

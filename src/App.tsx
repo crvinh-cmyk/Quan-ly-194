@@ -671,6 +671,7 @@ export default function App() {
             products={products}
             stockImports={stockImports}
             customers={customers}
+            currentUserEmail={currentUser?.email}
             onResetYearData={handleResetYearData}
           />
         )}

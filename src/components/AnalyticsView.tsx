@@ -3,14 +3,17 @@ import { Order, Product, StockImportReceipt, Customer } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import {
   Calendar, DollarSign, Award, BarChart3, RotateCcw,
-  Sparkles, CheckCircle2, Flame, ArrowDown, TrendingUp, Coins
+  Sparkles, CheckCircle2, Flame, ArrowDown, TrendingUp, Coins,
+  Table2
 } from 'lucide-react';
+import { ProductCostAnalyticsTable } from './ProductCostAnalyticsTable';
 
 interface AnalyticsViewProps {
   orders: Order[];
   products: Product[];
   stockImports?: StockImportReceipt[];
   customers?: Customer[];
+  currentUserEmail?: string | null;
   onResetYearData?: (year: number, resetType: 'all' | 'ordersOnly' | 'baselineOnly') => void;
 }
 
@@ -18,6 +21,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   orders,
   products,
   customers = [],
+  currentUserEmail,
   onResetYearData
 }) => {
   // Current real year
@@ -29,6 +33,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all'); // 1-12 or 'all'
   const [dailyMonth, setDailyMonth] = useState<number>(currentRealMonth);
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'monthly' | 'daily'>('all');
+  const [activeMainSection, setActiveMainSection] = useState<'sales' | 'product_cost'>('sales');
 
   // Reset modal state
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -205,8 +210,63 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header & Year/Month Filter Toolbar */}
-      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* TOP PRIMARY TABS: DOANH SỐ / ĐỊNH MỨC GIÁ VỐN & TỶ SUẤT LỢI NHUẬN GỘP */}
+      <div className="bg-white rounded-2xl p-2.5 border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setActiveMainSection('sales')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+              activeMainSection === 'sales'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-amber-400" />
+            <span>1. Báo Cáo Doanh Số Bán Hàng</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold">
+              Năm {selectedYear}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveMainSection('product_cost')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+              activeMainSection === 'product_cost'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Table2 className="w-4 h-4 text-slate-900" />
+            <span>2. Bảng Định Mức Giá Vốn & Tỷ Suất LNG</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-white font-mono font-bold">
+              Mẫu PDF (63 Mã)
+            </span>
+          </button>
+        </div>
+
+        <div className="text-xs text-slate-500 flex items-center gap-1.5 px-2">
+          {activeMainSection === 'sales' ? (
+            <span className="flex items-center gap-1 text-slate-400">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              Doanh số 12 tháng & chi tiết từng ngày
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-emerald-700 font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Tự động liên kết Bảng Giá SP & Tự động tính Tỷ suất LNG / Giá bán
+            </span>
+          )}
+        </div>
+      </div>
+
+      {activeMainSection === 'product_cost' ? (
+        <ProductCostAnalyticsTable products={products} currentUserEmail={currentUserEmail} />
+      ) : (
+        <>
+          {/* Header & Year/Month Filter Toolbar */}
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-lg font-bold text-slate-900 uppercase">
@@ -364,6 +424,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             }`}
           >
             📅 Bảng Doanh Số Từng Ngày
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveMainSection('product_cost')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 flex items-center gap-1.5 ml-1"
+            title="Mở Bảng Định Mức Giá Vốn & Tỷ Suất Lợi Nhuận Gộp theo mẫu PDF"
+          >
+            <Table2 className="w-3.5 h-3.5 text-amber-700" />
+            <span>Bảng Định Mức Giá Vốn & LNG (Mẫu PDF)</span>
           </button>
         </div>
 
@@ -821,6 +891,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           })}
         </div>
       </div>
+        </>
+      )}
 
       {/* ========================================================= */}
       {/* MODAL: RESET DỮ LIỆU NĂM THỦ CÔNG */}

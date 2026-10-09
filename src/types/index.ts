@@ -194,3 +194,25 @@ export interface StudioCombo {
   createdBy?: string;
 }
 
+/**
+ * Định mức chi phí giá vốn cấu thành 1 sản phẩm in ảnh (theo mẫu thống kê tiệm in 194):
+ * - Mực: Chi phí mực in
+ * - Giấy: Chi phí giấy in ảnh
+ * - Ván/Fomex: Chi phí cốt ván MDF hoặc Fomex 9li
+ * - Màng Ép: Chi phí màng ép bóng / lụa
+ * - Khung/Viền: Chi phí khung phào / viền bo / nẹp
+ * - Khác: Chi phí keo, màng PE, băng keo, phụ kiện...
+ */
+export interface ProductCostItem {
+  ink?: number;       // Mực
+  paper?: number;     // Giấy
+  board?: number;     // Ván/Fomex
+  film?: number;      // Màng Ép
+  frame?: number;     // Khung/Viền
+  other?: number;     // Khác
+  manualStudioPrice?: number; // Giá bán Studio (nếu muốn nhập/sửa thủ công khi bảng giá chưa có)
+}
+
+export type ProductCostMap = Record<string, ProductCostItem>;
+
+
