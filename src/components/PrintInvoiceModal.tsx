@@ -888,8 +888,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                   <tr className="bg-slate-100 text-slate-900 font-bold border-b border-slate-300">
                     <th className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center w-8`}>STT</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-20`}>Ngày</th>
-                    <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-24`}>Mã hàng</th>
-                    <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'}`}>Tên hàng & Quy cách ảnh</th>
+                    <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'}`}>Tên hàng hóa & Quy cách</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-20`}>Khổ</th>
                     <th className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center w-12`}>SL</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-right w-24`}>Đơn giá</th>
@@ -908,35 +907,17 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                           {formatDateVN(item.date || order.date)}
                         </td>
 
-                        {/* Mã hàng */}
-                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} font-mono font-bold text-slate-900 bg-slate-50/70 text-center break-words`}>
-                          <span className="inline-block px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-900 font-mono text-[11px] font-bold">
-                            {item.productCode}
-                          </span>
-                        </td>
-
-                        {/* Tên hàng & Quy cách ảnh: Tách dòng rõ ràng giữa tên và mã sản phẩm (không hiển thị cốt vật tư cho khách) */}
+                        {/* Tên hàng hóa & Quy cách (Đã bỏ mã sản phẩm để tăng không gian rộng rãi cho tên hàng) */}
                         <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'} text-slate-900`}>
                           {/* Tên sản phẩm: In đậm, cỡ chữ dễ đọc, ngắt dòng tự nhiên */}
                           <div className={`font-bold text-slate-950 ${isA5 ? 'text-xs' : 'text-[13px]'} break-words leading-snug`}>
                             {item.productName}
                           </div>
 
-                          {/* Dòng riêng bên dưới: Mã sản phẩm & Ghi chú (KHÔNG hiển thị cốt vật tư cho khách hàng) */}
-                          {(item.productCode || item.note) && (
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                              {item.productCode && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[10px] text-gray-500 bg-gray-100 border border-gray-200 font-semibold">
-                                  <span>Mã:</span>
-                                  <strong className="text-gray-700">{item.productCode}</strong>
-                                </span>
-                              )}
-
-                              {item.note && (
-                                <span className="text-[10px] text-gray-500 italic">
-                                  ↳ Ghi chú: {item.note}
-                                </span>
-                              )}
+                          {/* Ghi chú riêng của sản phẩm (nếu có) */}
+                          {item.note && (
+                            <div className="mt-0.5 text-[10px] text-gray-500 italic">
+                              ↳ Ghi chú: {item.note}
                             </div>
                           )}
                         </td>

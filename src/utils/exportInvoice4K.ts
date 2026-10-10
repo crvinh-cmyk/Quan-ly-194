@@ -224,7 +224,8 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
 
   // 6. ITEMS TABLE (1920 px width, 92px row height)
   const tableY = curY;
-  const colWidths = [90, 190, 220, 580, 180, 130, 260, 270];
+  // 7 cột: STT (90), Ngày (190), Tên hàng hóa & Quy cách (800 - mở rộng tối đa), Khổ (180), SL (130), Đơn giá (260), Thành tiền (270)
+  const colWidths = [90, 190, 800, 180, 130, 260, 270];
   const colX = [padX];
   for (let i = 0; i < colWidths.length - 1; i++) {
     colX.push(colX[i] + colWidths[i]);
@@ -239,7 +240,7 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
   roundRect(ctx, padX, tableY, padW, thH, 10);
   ctx.stroke();
 
-  const headers = ['STT', 'Ngày', 'Mã hàng', 'Tên hàng hóa & Quy cách', 'Khổ', 'SL', 'Đơn giá', 'Thành tiền'];
+  const headers = ['STT', 'Ngày', 'Tên hàng hóa & Quy cách', 'Khổ', 'SL', 'Đơn giá', 'Thành tiền'];
   ctx.font = `700 26px ${FONT_SANS}`;
   ctx.fillStyle = '#0f172a';
   ctx.textBaseline = 'middle';
@@ -249,21 +250,19 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
   ctx.fillText(headers[0], colX[0] + colWidths[0] / 2, tableY + thH / 2);
   // Ngày
   ctx.fillText(headers[1], colX[1] + colWidths[1] / 2, tableY + thH / 2);
-  // Mã
+  // Tên hàng hóa & Quy cách
   ctx.textAlign = 'left';
   ctx.fillText(headers[2], colX[2] + 15, tableY + thH / 2);
-  // Tên
-  ctx.fillText(headers[3], colX[3] + 15, tableY + thH / 2);
   // Khổ
   ctx.textAlign = 'center';
-  ctx.fillText(headers[4], colX[4] + colWidths[4] / 2, tableY + thH / 2);
+  ctx.fillText(headers[3], colX[3] + colWidths[3] / 2, tableY + thH / 2);
   // SL
-  ctx.fillText(headers[5], colX[5] + colWidths[5] / 2, tableY + thH / 2);
+  ctx.fillText(headers[4], colX[4] + colWidths[4] / 2, tableY + thH / 2);
   // Đơn giá
   ctx.textAlign = 'right';
-  ctx.fillText(headers[6], colX[6] + colWidths[6] - 15, tableY + thH / 2);
+  ctx.fillText(headers[5], colX[5] + colWidths[5] - 15, tableY + thH / 2);
   // Thành tiền
-  ctx.fillText(headers[7], colX[7] + colWidths[7] - 15, tableY + thH / 2);
+  ctx.fillText(headers[6], colX[6] + colWidths[6] - 15, tableY + thH / 2);
 
   curY += thH;
 
@@ -300,52 +299,46 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
     ctx.fillStyle = '#475569';
     ctx.fillText(formatDateVN(item.date || order.date), colX[1] + colWidths[1] / 2, textMidY);
 
-    // Mã SP
+    // Tên SP: Đã bỏ hoàn toàn mã sản phẩm để rộng rãi, không bị rối mắt
     ctx.textAlign = 'left';
     ctx.font = `700 26px ${FONT_SANS}`;
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(item.productCode, colX[2] + 15, textMidY);
-
-    // Tên SP: Dòng 1 Tên SP (In đậm)
-    ctx.font = `700 26px ${FONT_SANS}`;
-    ctx.fillStyle = '#0f172a';
     let displayTitle = item.productName;
-    if (displayTitle.length > 34) displayTitle = displayTitle.substring(0, 32) + '...';
-    ctx.fillText(displayTitle, colX[3] + 15, textMidY - 14);
+    if (displayTitle.length > 46) displayTitle = displayTitle.substring(0, 44) + '...';
 
-    // Dòng 2: Mã SP & Ghi chú (không hiển thị cốt vật tư cho khách hàng)
-    ctx.font = `500 20px ${FONT_SANS}`;
-    ctx.fillStyle = '#64748b';
-    const subParts: string[] = [];
-    if (item.productCode) subParts.push(`Mã: ${item.productCode}`);
-    if (item.note) subParts.push(`Ghi chú: ${item.note}`);
-    let subText = subParts.join('  •  ');
-    if (subText.length > 44) subText = subText.substring(0, 42) + '...';
-    if (subParts.length > 0) {
-      ctx.fillText(subText, colX[3] + 15, textMidY + 18);
+    if (item.note) {
+      ctx.fillText(displayTitle, colX[2] + 15, textMidY - 14);
+      // Ghi chú của khách/sản phẩm (nếu có)
+      ctx.font = `500 20px ${FONT_SANS}`;
+      ctx.fillStyle = '#64748b';
+      let noteText = `↳ Ghi chú: ${item.note}`;
+      if (noteText.length > 55) noteText = noteText.substring(0, 53) + '...';
+      ctx.fillText(noteText, colX[2] + 15, textMidY + 18);
+    } else {
+      ctx.fillText(displayTitle, colX[2] + 15, textMidY);
     }
 
     // Khổ
     ctx.textAlign = 'center';
     ctx.font = `700 26px ${FONT_SANS}`;
     ctx.fillStyle = '#334155';
-    ctx.fillText(item.size, colX[4] + colWidths[4] / 2, textMidY);
+    ctx.fillText(item.size, colX[3] + colWidths[3] / 2, textMidY);
 
     // SL
     ctx.font = `800 30px ${FONT_SANS}`;
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(item.quantity.toString(), colX[5] + colWidths[5] / 2, textMidY);
+    ctx.fillText(item.quantity.toString(), colX[4] + colWidths[4] / 2, textMidY);
 
     // Đơn giá
     ctx.textAlign = 'right';
     ctx.font = `600 27px ${FONT_SANS}`;
     ctx.fillStyle = '#475569';
-    ctx.fillText(formatCurrency(item.price), colX[6] + colWidths[6] - 15, textMidY);
+    ctx.fillText(formatCurrency(item.price), colX[5] + colWidths[5] - 15, textMidY);
 
     // Thành tiền
     ctx.font = `800 29px ${FONT_SANS}`;
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(formatCurrency(item.amount), colX[7] + colWidths[7] - 15, textMidY);
+    ctx.fillText(formatCurrency(item.amount), colX[6] + colWidths[6] - 15, textMidY);
   }
 
   // Outer border of table
