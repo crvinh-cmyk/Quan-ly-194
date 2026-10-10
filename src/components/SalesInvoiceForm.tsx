@@ -6,7 +6,7 @@ import {
   Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
   ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
   Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X, ShoppingBag, Building2,
-  ExternalLink, Copy
+  ExternalLink, Copy, Edit3
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 import { StudioComboModal } from './StudioComboModal';
@@ -37,6 +37,8 @@ interface SalesInvoiceFormProps {
   onAddNewCustomer: (customer: Customer) => void;
   onAddNewProduct: (product: Product) => void;
   newOrderTrigger?: number;
+  editingOrder?: Order | null;
+  onCancelEdit?: () => void;
 }
 
 export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
@@ -50,8 +52,15 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
   onSaveOrder,
   onAddNewCustomer,
   onAddNewProduct,
-  newOrderTrigger
+  newOrderTrigger,
+  editingOrder,
+  onCancelEdit
 }) => {
+  // Editing state for supplementing/updating an existing invoice
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [editingOrderNumber, setEditingOrderNumber] = useState<string>('');
+  const [editingOrderCreatedAt, setEditingOrderCreatedAt] = useState<string>('');
+
   // Order general info
   const [orderDate, setOrderDate] = useState<string>(getTodayDateString());
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
@@ -546,6 +555,9 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
 
   // Reset form to brand new
   const handleResetForm = (showNotice: boolean = true) => {
+    setEditingInvoiceId(null);
+    setEditingOrderNumber('');
+    setEditingOrderCreatedAt('');
     setOrderDate(getTodayDateString());
     setSelectedCustomerId('');
     setCustomerName('');
@@ -576,12 +588,68 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
     }
   };
 
+  // Cancel edit mode and return to new order
+  const handleCancelEdit = () => {
+    handleResetForm(false);
+    if (onCancelEdit) {
+      onCancelEdit();
+    }
+    setSaveSuccessMsg('Đã hủy chế độ sửa, quay về tạo hóa đơn mới.');
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
   // Watch external newOrderTrigger from header
   useEffect(() => {
     if (newOrderTrigger && newOrderTrigger > 0) {
       handleResetForm(true);
+      if (onCancelEdit) {
+        onCancelEdit();
+      }
     }
   }, [newOrderTrigger]);
+
+  // Load editing order into form when editingOrder changes
+  useEffect(() => {
+    if (editingOrder) {
+      setEditingInvoiceId(editingOrder.id);
+      setEditingOrderNumber(editingOrder.orderNumber);
+      setEditingOrderCreatedAt(editingOrder.createdAt);
+      setOrderDate(editingOrder.date || getTodayDateString());
+      setSelectedCustomerId(editingOrder.customerId || '');
+      setCustomerName(editingOrder.customerName || '');
+      setCustomerPhone(editingOrder.customerPhone || '');
+      setCustomerAddress(editingOrder.customerAddress || '');
+      setCustomerSearch(editingOrder.customerName || '');
+      setOrderNotes(editingOrder.notes || '');
+      setOrderStatus(editingOrder.status || 'completed');
+      setDiscount(editingOrder.discount || 0);
+      setPreviousDebt(editingOrder.previousDebt || 0);
+      setPaid(editingOrder.paid || 0);
+
+      // Load items
+      if (editingOrder.items && editingOrder.items.length > 0) {
+        setItems(editingOrder.items.map((it, idx) => ({
+          ...it,
+          id: it.id || `row-${idx + 1}-${Date.now()}`
+        })));
+      } else {
+        setItems([{
+          id: `row-1-${Date.now()}`,
+          date: editingOrder.date || getTodayDateString(),
+          productCode: '',
+          productName: '',
+          size: '',
+          price: 0,
+          quantity: 1,
+          amount: 0,
+          note: ''
+        }]);
+      }
+
+      setSaveSuccessMsg(`📋 Đang ở chế độ bổ sung / cập nhật hóa đơn #${editingOrder.orderNumber}`);
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+    }
+  }, [editingOrder]);
 
   // Calculations
   const subtotal = items.reduce((sum, item) => sum + (item.amount || 0), 0);
@@ -832,7 +900,10 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
       return;
     }
 
-    const orderNum = `194-${new Date(orderDate).getFullYear()}-${String(allOrders.length + 1).padStart(3, '0')}`;
+    const isEditMode = !!editingInvoiceId;
+    const orderNum = editingOrderNumber || `194-${new Date(orderDate).getFullYear()}-${String(allOrders.length + 1).padStart(3, '0')}`;
+    const orderId = editingInvoiceId || `ord-${Date.now()}`;
+    const orderCreatedAt = editingOrderCreatedAt || new Date().toISOString();
     const freshBOM = calculateOrderBOM(validItems, materials, products);
 
     // Collect deductions from Phiếu xuất ván MDF
@@ -865,7 +936,7 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
     });
 
     const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+      id: orderId,
       orderNumber: orderNum,
       date: orderDate,
       customerId: selectedCustomerId || `cust-${Date.now()}`,
@@ -881,13 +952,27 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
       status: orderStatus,
       materialsDeducted: finalDeductions,
       notes: orderNotes.trim(),
-      createdAt: new Date().toISOString(),
+      createdAt: orderCreatedAt,
       updatedAt: new Date().toISOString()
     };
 
     onSaveOrder(newOrder, openPrint);
     setLastSavedOrder(newOrder);
-    setSaveSuccessMsg(`Đã lưu đơn hàng #${orderNum} thành công!${totalMdfBoards > 0 ? ` (Phiếu xuất: đã trừ ${totalMdfBoards} tấm cốt Ván MDF / Fomex trong Kho Vật Tư)` : ''}`);
+
+    // Dọn dẹp form sau khi lưu / cập nhật và trả về trạng thái bình thường
+    handleResetForm(false);
+    setEditingInvoiceId(null);
+    setEditingOrderNumber('');
+    setEditingOrderCreatedAt('');
+    if (onCancelEdit) {
+      onCancelEdit();
+    }
+
+    if (isEditMode) {
+      setSaveSuccessMsg(`✅ Đã cập nhật thành công hóa đơn #${orderNum}! Dữ liệu kho vật tư đã được tự động hoàn trả và trừ lại chính xác.`);
+    } else {
+      setSaveSuccessMsg(`Đã lưu đơn hàng #${orderNum} thành công!${totalMdfBoards > 0 ? ` (Phiếu xuất: đã trừ ${totalMdfBoards} tấm cốt Ván MDF / Fomex trong Kho Vật Tư)` : ''}`);
+    }
   };
 
   // Quick Customer Creation
@@ -1004,6 +1089,42 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
         </div>
       )}
 
+      {/* Edit Mode Notification Banner */}
+      {editingInvoiceId && (
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-4 sm:p-5 border-2 border-blue-400/80 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-blue-500/20 rounded-xl border border-blue-400/40 text-blue-300 shrink-0">
+              <Edit3 className="w-5 h-5 text-blue-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs uppercase tracking-wider font-extrabold text-blue-300">
+                  Đang Bổ Sung / Cập Nhật Hóa Đơn
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-400 text-slate-950 shadow-xs">
+                  #{editingOrderNumber}
+                </span>
+                <span className="text-xs text-blue-200 font-medium">
+                  (Khách: <strong className="text-white">{customerName || 'Chưa có tên'}</strong>)
+                </span>
+              </div>
+              <p className="text-xs text-blue-100/90 mt-1">
+                💡 Bạn có thể thêm hàng hóa mới, sửa số lượng hoặc công nợ. Khi bấm <strong className="text-amber-300">"Cập Nhật Hóa Đơn"</strong>, hệ thống sẽ tự động hoàn trả kho cũ và trừ kho mới chính xác vào Firestore.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleCancelEdit}
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 border border-white/30 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+            title="Hủy bỏ chỉnh sửa và quay lại màn hình tạo đơn mới"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-300" />
+            <span>Hủy Sửa (Tạo Mới)</span>
+          </button>
+        </div>
+      )}
+
       {/* Main Order Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
         {/* Card Header / Title */}
@@ -1014,13 +1135,26 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold tracking-tight text-white">TẠO ĐƠN HÀNG & PHIẾU BÁN HÀNG</h2>
+                <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                  {editingInvoiceId ? (
+                    <>
+                      <span>BỔ SUNG / CẬP NHẬT HÓA ĐƠN</span>
+                      <span className="font-mono text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-lg border border-amber-400/40 text-sm">
+                        #{editingOrderNumber}
+                      </span>
+                    </>
+                  ) : (
+                    <span>TẠO ĐƠN HÀNG & PHIẾU BÁN HÀNG</span>
+                  )}
+                </h2>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Tự động điền theo Mã SP
+                  {editingInvoiceId ? 'Chế độ chỉnh sửa' : 'Tự động điền theo Mã SP'}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Nhập mã hàng (VD: <span className="text-amber-400 font-mono font-medium">EG1015, TG6090, PL2030</span>) hệ thống tự động điền Tên, Kích thước, Đơn giá
+                {editingInvoiceId
+                  ? 'Bổ sung danh sách hàng hóa hoặc sửa số lượng, công nợ trực tiếp cho hóa đơn này.'
+                  : 'Nhập mã hàng (VD: EG1015, TG6090, PL2030) hệ thống tự động điền Tên, Kích thước, Đơn giá'}
               </p>
             </div>
           </div>
@@ -2048,35 +2182,55 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                   <button
                     type="button"
                     onClick={() => handleSave(true)}
-                    className="flex flex-col items-center justify-center py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/20 transition cursor-pointer"
-                    title="Lưu đơn và mở cửa sổ in khổ A4/A5 hoặc xuất file ảnh JPG 3840 x 2160 px gửi khách"
+                    className={`flex flex-col items-center justify-center py-2 px-3 rounded-xl ${
+                      editingInvoiceId
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/25'
+                        : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+                    } font-extrabold transition cursor-pointer`}
+                    title={editingInvoiceId ? `Cập nhật đơn #${editingOrderNumber} và mở cửa sổ in phiếu` : "Lưu đơn và mở cửa sổ in khổ A4/A5 hoặc xuất file ảnh JPG gửi khách"}
                   >
                     <div className="flex items-center gap-1.5 text-xs">
                       <Printer className="w-4 h-4" />
-                      <span>LƯU & IN PHIẾU</span>
+                      <span>{editingInvoiceId ? 'CẬP NHẬT & IN PHIẾU' : 'LƯU & IN PHIẾU'}</span>
                     </div>
-                    <span className="text-[10px] font-semibold text-slate-900/80">(Xuất Phiếu • In A4/A5)</span>
+                    <span className="text-[10px] font-semibold opacity-90">
+                      {editingInvoiceId ? `(Cập nhật #${editingOrderNumber})` : '(Xuất Phiếu • In A4/A5)'}
+                    </span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSave(false)}
-                    className="flex flex-col items-center justify-center py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md transition cursor-pointer"
-                    title="Lưu đơn hàng vào hệ thống"
+                    className={`flex flex-col items-center justify-center py-2 px-3 rounded-xl ${
+                      editingInvoiceId
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md'
+                    } transition cursor-pointer`}
+                    title={editingInvoiceId ? `Cập nhật ghi đè vào hóa đơn #${editingOrderNumber}` : "Lưu đơn hàng vào hệ thống"}
                   >
                     <div className="flex items-center gap-1.5 text-xs">
-                      <Save className="w-4 h-4" />
-                      <span>LƯU ĐƠN HÀNG</span>
+                      {editingInvoiceId ? <RefreshCw className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                      <span>{editingInvoiceId ? 'CẬP NHẬT HÓA ĐƠN' : 'LƯU ĐƠN HÀNG'}</span>
                     </div>
-                    <span className="text-[10px] font-normal text-emerald-100">(Lưu vào sổ đơn)</span>
+                    <span className="text-[10px] font-normal text-emerald-100">
+                      {editingInvoiceId ? `(Ghi đè #${editingOrderNumber})` : '(Lưu vào sổ đơn)'}
+                    </span>
                   </button>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleResetForm(true)}
+                  onClick={() => {
+                    if (editingInvoiceId) {
+                      handleCancelEdit();
+                    } else {
+                      handleResetForm(true);
+                    }
+                  }}
                   className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  + TẠO ĐƠN MỚI (LÀM TRẮNG BẢNG ĐỂ BÁN ĐƠN TIẾP THEO)
+                  {editingInvoiceId
+                    ? '+ HỦY SỬA & TẠO ĐƠN MỚI (LÀM TRẮNG BẢNG)'
+                    : '+ TẠO ĐƠN MỚI (LÀM TRẮNG BẢNG ĐỂ BÁN ĐƠN TIẾP THEO)'}
                 </button>
               </div>
             </div>

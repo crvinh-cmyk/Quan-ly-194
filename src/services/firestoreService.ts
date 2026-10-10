@@ -5,7 +5,8 @@ import {
   deleteDoc,
   onSnapshot,
   getDocs,
-  writeBatch
+  writeBatch,
+  runTransaction
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo, ProductCostItem, ProductCostMap, InkImportRecord, InkColorCode } from '../types';
@@ -320,6 +321,105 @@ export async function saveOrderToFirestore(
     updatedAt: new Date().toISOString()
   }, user);
   await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+}
+
+/**
+ * Lưu hoặc Cập nhật đơn hàng an toàn với Firestore Transaction / Batch:
+ * Khi cập nhật/bổ sung đơn hàng:
+ * 1. Hoàn trả (restore) toàn bộ số lượng vật tư / cốt ván đã trừ của hóa đơn cũ vào kho.
+ * 2. Trừ toàn bộ số lượng vật tư / cốt ván mới theo danh sách hàng hóa bổ sung của hóa đơn mới.
+ * 3. Đảm bảo tính nhất quán dữ liệu tồn kho, tránh trừ trùng lặp hoặc mất mát số lượng.
+ */
+export async function saveOrUpdateOrderWithInventoryTransaction(
+  order: Order,
+  previousOrder?: Order | null,
+  user?: AuthUserContext | null,
+  currentMaterials?: Material[]
+): Promise<void> {
+  const prevDeductions: Record<string, number> = {};
+  if (previousOrder?.materialsDeducted && Array.isArray(previousOrder.materialsDeducted)) {
+    for (const d of previousOrder.materialsDeducted) {
+      if (d.materialId) {
+        prevDeductions[d.materialId] = (prevDeductions[d.materialId] || 0) + (Number(d.quantity) || 0);
+      }
+    }
+  }
+
+  const newDeductions: Record<string, number> = {};
+  if (order.materialsDeducted && Array.isArray(order.materialsDeducted)) {
+    for (const d of order.materialsDeducted) {
+      if (d.materialId) {
+        newDeductions[d.materialId] = (newDeductions[d.materialId] || 0) + (Number(d.quantity) || 0);
+      }
+    }
+  }
+
+  const affectedMaterialIds = Array.from(
+    new Set([...Object.keys(prevDeductions), ...Object.keys(newDeductions)])
+  );
+
+  const orderDocRef = doc(db, COLLECTIONS.ORDERS, order.id);
+  const enrichedOrder = attachUserInfo({
+    ...order,
+    date: normalizeDateOnly(order.date),
+    createdAt: normalizeFirestoreDate(order.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+
+  // Thử dùng runTransaction để đảm bảo tính Atomic ACID
+  try {
+    await runTransaction(db, async (transaction) => {
+      // 1. ALL READS FIRST (Bắt buộc theo nguyên tắc của Firestore runTransaction)
+      const materialReads: { ref: any; currentStock: number; id: string }[] = [];
+      for (const matId of affectedMaterialIds) {
+        const matRef = doc(db, COLLECTIONS.MATERIALS, matId);
+        const snap = await transaction.get(matRef);
+        let curStock = 0;
+        if (snap.exists()) {
+          curStock = Number(snap.data()?.stockQuantity) || 0;
+        } else if (currentMaterials) {
+          const inState = currentMaterials.find(m => m.id === matId);
+          if (inState) curStock = inState.stockQuantity;
+        }
+        materialReads.push({ ref: matRef, currentStock: curStock, id: matId });
+      }
+
+      // 2. ALL WRITES
+      // Lưu thông tin hóa đơn (ghi đè document ID cũ khi cập nhật)
+      transaction.set(orderDocRef, cleanFirestoreObject(enrichedOrder), { merge: true });
+
+      // Cập nhật số lượng tồn kho từng vật tư bị ảnh hưởng
+      for (const m of materialReads) {
+        const restoredQty = prevDeductions[m.id] || 0;
+        const deductQty = newDeductions[m.id] || 0;
+        // Tồn kho mới = Tồn kho hiện tại + Trả lại từ đơn cũ - Trừ theo đơn mới
+        const netStock = Math.round(Math.max(0, m.currentStock + restoredQty - deductQty) * 100) / 100;
+        transaction.update(m.ref, {
+          stockQuantity: netStock,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+  } catch (txError) {
+    console.warn('Firestore runTransaction fallback sang writeBatch:', txError);
+    // Fallback qua writeBatch khi chạy offline hoặc gặp lỗi Transaction timeout
+    const batch = writeBatch(db);
+    batch.set(orderDocRef, cleanFirestoreObject(enrichedOrder), { merge: true });
+
+    for (const matId of affectedMaterialIds) {
+      const inState = currentMaterials?.find(m => m.id === matId);
+      const curStock = inState ? inState.stockQuantity : 0;
+      const restoredQty = prevDeductions[matId] || 0;
+      const deductQty = newDeductions[matId] || 0;
+      const netStock = Math.round(Math.max(0, curStock + restoredQty - deductQty) * 100) / 100;
+      const matRef = doc(db, COLLECTIONS.MATERIALS, matId);
+      batch.update(matRef, {
+        stockQuantity: netStock,
+        updatedAt: new Date().toISOString()
+      });
+    }
+    await batch.commit();
+  }
 }
 
 export async function deleteOrderFromFirestore(orderId: string): Promise<void> {

@@ -4,7 +4,7 @@ import { calculateCustomerDebt } from './utils/storage';
 import {
   subscribeProducts, saveProductToFirestore, deleteProductFromFirestore,
   subscribeCustomers, saveCustomerToFirestore, deleteCustomerFromFirestore,
-  subscribeOrders, saveOrderToFirestore, deleteOrderFromFirestore,
+  subscribeOrders, saveOrderToFirestore, deleteOrderFromFirestore, saveOrUpdateOrderWithInventoryTransaction,
   subscribeMaterials, saveMaterialToFirestore, deleteMaterialFromFirestore,
   subscribeStockImports, saveStockImportToFirestore, deleteStockImportFromFirestore, clearAllPurchasesFromFirestore,
   subscribeCombos, saveComboToFirestore, deleteComboFromFirestore,
@@ -69,6 +69,9 @@ export default function App() {
 
   // Print modal state
   const [activePrintOrder, setActivePrintOrder] = useState<Order | null>(null);
+
+  // Editing order state for supplementing/updating an existing invoice
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
 
   // Settings & Data Management modal states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -312,9 +315,14 @@ export default function App() {
     return materials.filter(m => m.stockQuantity > 0 && m.stockQuantity <= m.minStockAlert).length;
   }, [materials]);
 
-  // Save order handler (Direct Firestore)
+  // Save or Update order handler (Firestore Transaction an toàn)
   const handleSaveOrder = (newOrder: Order, openPrint: boolean) => {
-    saveOrderToFirestore(newOrder, userContext).catch(console.error);
+    // Tìm hóa đơn cũ trước khi sửa (nếu có)
+    const previousOrder = orders.find(o => o.id === newOrder.id) || editingOrder || null;
+
+    // Sử dụng Firestore Transaction an toàn: Hoàn trả kho cũ và trừ kho mới chính xác tuyệt đối
+    saveOrUpdateOrderWithInventoryTransaction(newOrder, previousOrder, userContext, materials)
+      .catch(console.error);
 
     // If customer doesn't exist, create customer directly on Cloud
     const existingCust = customers.find(c => c.id === newOrder.customerId);
@@ -330,39 +338,7 @@ export default function App() {
       saveCustomerToFirestore(newCust, userContext).catch(console.error);
     }
 
-    // Auto-deduct materials from warehouse inventory if specified on order
-    const existingOrder = orders.find(o => o.id === newOrder.id);
-    if (existingOrder && existingOrder.materialsDeducted && existingOrder.materialsDeducted.length > 0) {
-      materials.forEach(mat => {
-        const prevSum = existingOrder.materialsDeducted
-          ?.filter(d => d.materialId === mat.id)
-          .reduce((sum, d) => sum + d.quantity, 0) || 0;
-        if (prevSum > 0) {
-          const restoredMat: Material = {
-            ...mat,
-            stockQuantity: Math.round((mat.stockQuantity + prevSum) * 100) / 100,
-            updatedAt: new Date().toISOString()
-          };
-          saveMaterialToFirestore(restoredMat, userContext).catch(console.error);
-        }
-      });
-    }
-
-    if (newOrder.materialsDeducted && newOrder.materialsDeducted.length > 0) {
-      materials.forEach(mat => {
-        const totalDeduction = newOrder.materialsDeducted
-          ?.filter(d => d.materialId === mat.id)
-          .reduce((sum, d) => sum + d.quantity, 0) || 0;
-        if (totalDeduction > 0) {
-          const deductedMat: Material = {
-            ...mat,
-            stockQuantity: Math.round(Math.max(0, mat.stockQuantity - totalDeduction) * 100) / 100,
-            updatedAt: new Date().toISOString()
-          };
-          saveMaterialToFirestore(deductedMat, userContext).catch(console.error);
-        }
-      });
-    }
+    setEditingOrder(null);
 
     if (openPrint) {
       setActivePrintOrder(newOrder);
@@ -648,6 +624,8 @@ export default function App() {
             onAddNewCustomer={handleAddCustomer}
             onAddNewProduct={handleAddProduct}
             newOrderTrigger={newOrderTrigger}
+            editingOrder={editingOrder}
+            onCancelEdit={() => setEditingOrder(null)}
           />
         )}
 
@@ -658,6 +636,7 @@ export default function App() {
             onViewOrder={(order) => setActivePrintOrder(order)}
             onPrintOrder={(order) => setActivePrintOrder(order)}
             onEditOrder={(order) => {
+              setEditingOrder(order);
               handleSelectTab('pos');
             }}
             onDeleteOrder={handleDeleteOrder}

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Order, OrderStatus } from '../types';
 import { formatCurrency, formatDateVN } from '../utils/formatters';
 import {
-  Search, Printer, Trash2, DollarSign
+  Search, Printer, Trash2, DollarSign, Edit3
 } from 'lucide-react';
 
 interface OrderListProps {
@@ -138,7 +138,7 @@ export const OrderList: React.FC<OrderListProps> = ({
                 <th className="py-3 px-3 text-right w-28">Tiền hàng</th>
                 <th className="py-3 px-3 text-right w-24">Nợ cũ</th>
                 <th className="py-3 px-3 text-right w-28">Cần TT</th>
-                <th className="py-3 px-3 text-right w-36">Thao tác</th>
+                <th className="py-3 px-3 text-right w-44">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -208,7 +208,16 @@ export const OrderList: React.FC<OrderListProps> = ({
 
                     {/* Actions */}
                     <td className="py-3 px-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onEditOrder(order)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition cursor-pointer shadow-2xs shrink-0"
+                          title="Bổ sung / Chỉnh sửa đơn hàng này"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Bổ sung</span>
+                        </button>
                         {order.totalDue > 0 && (
                           <button
                             type="button"
