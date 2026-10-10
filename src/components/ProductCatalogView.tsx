@@ -1607,10 +1607,9 @@ export const ProductCatalogView: React.FC<ProductCatalogViewProps> = ({
                 <div className="mt-6 pt-4 border-t-2 border-slate-200 text-xs text-slate-600 space-y-2">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <p className="font-bold text-slate-900 mb-1">Thông tin thanh toán:</p>
-                      <p>Ngân hàng: <strong>{DEFAULT_WORKSHOP_INFO.bankAccount.bankName}</strong></p>
-                      <p>Số tài khoản: <strong className="font-mono text-indigo-900">{DEFAULT_WORKSHOP_INFO.bankAccount.accountNumber}</strong></p>
-                      <p>Chủ tài khoản: <strong>{DEFAULT_WORKSHOP_INFO.bankAccount.accountHolder}</strong></p>
+                      <p className="font-bold text-slate-900 mb-1">Thời gian phục vụ:</p>
+                      <p className="font-bold text-red-600">Thời gian làm việc từ 8H - 20h Từ thứ 2 đến thứ 7</p>
+                      <p className="text-slate-500 mt-1">Hotline / Zalo hỗ trợ: <strong>{DEFAULT_WORKSHOP_INFO.hotline}</strong></p>
                     </div>
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
                       <p className="font-bold text-slate-900 mb-1">Chính sách & Cam kết:</p>

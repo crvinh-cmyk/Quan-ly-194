@@ -1,4 +1,4 @@
-import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from '../types';
+import { Product, Customer, Order, WorkshopInfo, Material, StockImportReceipt, StudioCombo, InkColorMeta, InkImportRecord } from '../types';
 import { cloneStudioProductToFreelance } from '../utils/productHelpers';
 
 export const DEFAULT_WORKSHOP_INFO: WorkshopInfo = {
@@ -879,6 +879,192 @@ export const DEFAULT_COMBOS: StudioCombo[] = [
     ],
     createdAt: '2026-02-10T08:00:00Z',
     updatedAt: '2026-02-10T08:00:00Z'
+  }
+];
+
+// =================================================================
+// 12 MÀU MỰC CHUYÊN DỤNG TIỆM IN 194 (CANON LUCIA PRO)
+// PM, R, C, PGY, PBK, MBK, CO, GY, B, Y, M, PC
+// =================================================================
+export const INK_12_COLORS: InkColorMeta[] = [
+  {
+    code: 'PM',
+    name: 'Photo Magenta',
+    vietnameseName: 'Hồng ảnh / Đỏ cánh sen sáng',
+    hex: '#ec4899',
+    textColor: '#ffffff',
+    badgeBg: 'bg-pink-500 text-white',
+    description: 'Tái tạo tông da hồng hào sáng mịn và chi tiết cánh hoa tươi sáng'
+  },
+  {
+    code: 'R',
+    name: 'Red',
+    vietnameseName: 'Đỏ tươi / Đỏ cờ',
+    hex: '#ef4444',
+    textColor: '#ffffff',
+    badgeBg: 'bg-red-600 text-white',
+    description: 'Mở rộng dải màu đỏ cờ, váy cưới đỏ, áo dài truyền thống rực rỡ'
+  },
+  {
+    code: 'C',
+    name: 'Cyan',
+    vietnameseName: 'Xanh lơ / Xanh da trời',
+    hex: '#06b6d4',
+    textColor: '#ffffff',
+    badgeBg: 'bg-cyan-500 text-white',
+    description: 'Màu cơ bản tái tạo bầu trời trong và mặt biển sâu thẳm'
+  },
+  {
+    code: 'PGY',
+    name: 'Photo Gray',
+    vietnameseName: 'Xám ảnh cao cấp',
+    hex: '#94a3b8',
+    textColor: '#0f172a',
+    badgeBg: 'bg-slate-400 text-slate-900',
+    description: 'Khử hạt grain ở vùng sáng highlight, chuyển sắc cực mịn'
+  },
+  {
+    code: 'PBK',
+    name: 'Photo Black',
+    vietnameseName: 'Đen ảnh / Đen bóng',
+    hex: '#1e293b',
+    textColor: '#ffffff',
+    badgeBg: 'bg-slate-800 text-white',
+    description: 'Tạo độ tương phản sâu trên giấy bóng, tráng gương, pha lê'
+  },
+  {
+    code: 'MBK',
+    name: 'Matte Black',
+    vietnameseName: 'Đen nhám / Đen mờ',
+    hex: '#09090b',
+    textColor: '#ffffff',
+    badgeBg: 'bg-black text-white',
+    description: 'Độ đậm Dmax tối đa trên giấy lụa, giấy mỹ thuật và canvas'
+  },
+  {
+    code: 'CO',
+    name: 'Chroma Optimizer',
+    vietnameseName: 'Phủ bóng bảo vệ bề mặt',
+    hex: '#8b5cf6',
+    textColor: '#ffffff',
+    badgeBg: 'bg-purple-600 text-white',
+    description: 'Làm phẳng vi mô bề mặt, khử ánh đồng phản chiếu bronzing'
+  },
+  {
+    code: 'GY',
+    name: 'Gray',
+    vietnameseName: 'Xám tiêu chuẩn',
+    hex: '#64748b',
+    textColor: '#ffffff',
+    badgeBg: 'bg-slate-600 text-white',
+    description: 'Kiểm soát cân bằng xám trung tính, ảnh đen trắng chuẩn studio'
+  },
+  {
+    code: 'B',
+    name: 'Blue',
+    vietnameseName: 'Xanh dương đậm',
+    hex: '#2563eb',
+    textColor: '#ffffff',
+    badgeBg: 'bg-blue-600 text-white',
+    description: 'Mở rộng dải màu hoàng hôn, biển đêm và trang phục xanh'
+  },
+  {
+    code: 'Y',
+    name: 'Yellow',
+    vietnameseName: 'Vàng tươi chuẩn nét',
+    hex: '#eab308',
+    textColor: '#0f172a',
+    badgeBg: 'bg-amber-400 text-slate-950',
+    description: 'Tái tạo ánh nắng ấm áp, trang sức vàng và tông màu ấm áp'
+  },
+  {
+    code: 'M',
+    name: 'Magenta',
+    vietnameseName: 'Đỏ sen / Đỏ tím',
+    hex: '#c026d3',
+    textColor: '#ffffff',
+    badgeBg: 'bg-fuchsia-600 text-white',
+    description: 'Màu cơ bản tái tạo dải màu ấm và chuyển tông tương phản'
+  },
+  {
+    code: 'PC',
+    name: 'Photo Cyan',
+    vietnameseName: 'Xanh lơ ảnh sáng',
+    hex: '#38bdf8',
+    textColor: '#0f172a',
+    badgeBg: 'bg-sky-400 text-slate-950',
+    description: 'Chuyển sắc mượt mà cho bầu trời xanh ngắt và tà áo dài nhẹ nhàng'
+  }
+];
+
+export const DEFAULT_INK_IMPORTS: InkImportRecord[] = [
+  {
+    id: 'ink-imp-2025-01',
+    receiptNumber: 'NK-MUC-2025-001',
+    date: '2025-04-12',
+    year: 2025,
+    supplier: 'SVP',
+    items: {
+      PM: 4, R: 3, C: 5, PGY: 6, PBK: 8, MBK: 10,
+      CO: 8, GY: 5, B: 3, Y: 6, M: 5, PC: 4
+    },
+    totalQuantity: 67,
+    unit: 'Bình',
+    costPricePerBottle: 850000,
+    totalCost: 56950000,
+    notes: 'Nhập mực đợt 1 năm 2025 nhà cung cấp SVP',
+    createdAt: '2025-04-12T09:00:00Z'
+  },
+  {
+    id: 'ink-imp-2025-02',
+    receiptNumber: 'NK-MUC-2025-002',
+    date: '2025-09-20',
+    year: 2025,
+    supplier: 'SVP',
+    items: {
+      PM: 5, R: 4, C: 6, PGY: 7, PBK: 9, MBK: 12,
+      CO: 10, GY: 6, B: 4, Y: 7, M: 6, PC: 5
+    },
+    totalQuantity: 81,
+    unit: 'Bình',
+    costPricePerBottle: 850000,
+    totalCost: 68850000,
+    notes: 'Nhập phục vụ cao điểm mùa cưới cuối năm 2025 từ SVP',
+    createdAt: '2025-09-20T10:30:00Z'
+  },
+  {
+    id: 'ink-imp-2026-01',
+    receiptNumber: 'NK-MUC-2026-001',
+    date: '2026-01-15',
+    year: 2026,
+    supplier: 'SVP',
+    items: {
+      PM: 6, R: 4, C: 6, PGY: 8, PBK: 10, MBK: 12,
+      CO: 10, GY: 6, B: 4, Y: 7, M: 6, PC: 5
+    },
+    totalQuantity: 84,
+    unit: 'Bình',
+    costPricePerBottle: 880000,
+    totalCost: 73920000,
+    notes: 'Nhập trọn bộ 12 màu Lucia Pro đợt đầu năm 2026 từ NCC SVP',
+    createdAt: '2026-01-15T08:30:00Z'
+  },
+  {
+    id: 'ink-imp-2026-02',
+    receiptNumber: 'NK-MUC-2026-002',
+    date: '2026-03-22',
+    year: 2026,
+    supplier: 'SVP',
+    items: {
+      PM: 4, R: 3, C: 5, PGY: 6, PBK: 8, MBK: 10,
+      CO: 8, GY: 4, B: 3, Y: 5, M: 4, PC: 4
+    },
+    totalQuantity: 64,
+    unit: 'Bình',
+    costPricePerBottle: 880000,
+    totalCost: 56320000,
+    notes: 'Bổ sung mực đen MBK, PBK và phủ bóng CO từ SVP',
+    createdAt: '2026-03-22T14:00:00Z'
   }
 ];
 

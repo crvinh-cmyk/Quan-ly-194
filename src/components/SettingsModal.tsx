@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { WorkshopInfo } from '../types';
-import { Settings, Check, Building2, Phone, MapPin, CreditCard } from 'lucide-react';
+import { Settings, Check, Building2, Phone, MapPin } from 'lucide-react';
 
 interface SettingsModalProps {
   workshop: WorkshopInfo;
@@ -19,9 +19,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [phone, setPhone] = useState(workshop.phone);
   const [hotline, setHotline] = useState(workshop.hotline);
   const [address, setAddress] = useState(workshop.address);
-  const [bankName, setBankName] = useState(workshop.bankAccount.bankName);
-  const [accountNumber, setAccountNumber] = useState(workshop.bankAccount.accountNumber);
-  const [accountHolder, setAccountHolder] = useState(workshop.bankAccount.accountHolder);
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
@@ -33,11 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       hotline: hotline.trim(),
       address: address.trim(),
       zalo: phone.trim(),
-      bankAccount: {
-        bankName: bankName.trim(),
-        accountNumber: accountNumber.trim(),
-        accountHolder: accountHolder.trim()
-      }
+      bankAccount: workshop.bankAccount
     });
     setSavedSuccess(true);
     setTimeout(() => {
@@ -114,47 +107,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
             </div>
-          </div>
-
-          {/* Bank Account */}
-          <div className="space-y-3 pt-3 border-t border-slate-200">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <CreditCard className="w-3.5 h-3.5 text-amber-600" />
-              Tài Khoản Ngân Hàng Nhận Tiền
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Ngân hàng</label>
-                <input
-                  type="text"
-                  value={bankName}
-                  onChange={(e) => setBankName(e.target.value)}
-                  placeholder="Techcombank"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-amber-500 outline-hidden"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Số tài khoản</label>
-                <input
-                  type="text"
-                  value={accountNumber}
-                  onChange={(e) => setAccountNumber(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-amber-500 outline-hidden"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Chủ tài khoản</label>
-                <input
-                  type="text"
-                  value={accountHolder}
-                  onChange={(e) => setAccountHolder(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs uppercase font-bold focus:ring-2 focus:ring-amber-500 outline-hidden"
-                />
-              </div>
-            </div>
             <button
               onClick={handleSaveInfo}
-              className="mt-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+              className="mt-4 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
             >
               Lưu Thông Tin Lên Cloud
             </button>

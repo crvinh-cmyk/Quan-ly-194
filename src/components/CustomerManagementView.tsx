@@ -653,7 +653,7 @@ export const CustomerManagementView: React.FC<CustomerManagementViewProps> = ({
                   type="text"
                   value={paymentNote}
                   onChange={(e) => setPaymentNote(e.target.value)}
-                  placeholder="Studio chuyển khoản Techcombank..."
+                  placeholder="Studio thanh toán qua chuyển khoản / tiền mặt..."
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs outline-hidden focus:ring-2 focus:ring-emerald-500"
                 />
               </div>

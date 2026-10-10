@@ -3,12 +3,164 @@ import { Order, WorkshopInfo } from '../types';
 import { formatCurrency, formatDateVN, numberToVietnameseWords } from '../utils/formatters';
 import {
   Printer, X, Download, Copy, Phone, MapPin,
-  Building2, Image, FileText, CheckCircle2, Loader2, Sparkles, ExternalLink
+  Building2, Image, FileText, CheckCircle2, Loader2, Sparkles, ExternalLink, Clock
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { generateInvoicePortraitCanvas, downloadCanvasAsJPG } from '../utils/exportInvoice4K';
 
 export type PaperSize = 'a4' | 'a5-portrait' | 'a5-landscape';
+
+/**
+ * Chuyển đổi mã màu oklch(...) sang mã màu RGB hoặc HEX an toàn
+ * để html2canvas không bị crash (do html2canvas chưa hỗ trợ hàm màu oklch của CSS Color Module 4).
+ */
+function convertOklchToRgb(colorStr: string): string {
+  if (!colorStr || typeof colorStr !== 'string') return colorStr;
+  if (!colorStr.includes('oklch') && !colorStr.includes('lab') && !colorStr.includes('color(')) {
+    return colorStr;
+  }
+
+  // 1. Dùng canvas 2d context để trình duyệt tự giải mã và chuẩn hóa oklch thành rgba/hex
+  try {
+    const c = document.createElement('canvas');
+    c.width = 1;
+    c.height = 1;
+    const ctx = c.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = colorStr;
+      const res = ctx.fillStyle;
+      if (res && !res.includes('oklch') && !res.includes('lab')) {
+        return res;
+      }
+    }
+  } catch {
+    // tiếp tục fallback nếu canvas context bận hoặc không giải mã được
+  }
+
+  // 2. Tra cứu bảng mã màu tương đương theo bảng màu Tailwind v4 chuẩn
+  const lower = colorStr.toLowerCase();
+  if (lower.includes('slate-950') || lower.includes('0.129')) return '#020617';
+  if (lower.includes('slate-900') || lower.includes('0.208')) return '#0f172a';
+  if (lower.includes('slate-800') || lower.includes('0.278')) return '#1e293b';
+  if (lower.includes('slate-700') || lower.includes('0.372')) return '#334155';
+  if (lower.includes('slate-600') || lower.includes('0.446')) return '#475569';
+  if (lower.includes('slate-500') || lower.includes('0.552')) return '#64748b';
+  if (lower.includes('slate-400') || lower.includes('0.704')) return '#94a3b8';
+  if (lower.includes('slate-300') || lower.includes('0.869')) return '#cbd5e1';
+  if (lower.includes('slate-200') || lower.includes('0.928')) return '#e2e8f0';
+  if (lower.includes('slate-100') || lower.includes('0.967')) return '#f1f5f9';
+  if (lower.includes('slate-50')  || lower.includes('0.984')) return '#f8fafc';
+  if (lower.includes('amber-500') || lower.includes('0.769')) return '#f59e0b';
+  if (lower.includes('amber-600') || lower.includes('0.666')) return '#d97706';
+  if (lower.includes('amber-700') || lower.includes('0.553')) return '#b45309';
+  if (lower.includes('amber-800') || lower.includes('0.47'))  return '#92400e';
+  if (lower.includes('amber-950') || lower.includes('0.28'))  return '#451a03';
+  if (lower.includes('amber-50')  || lower.includes('0.987')) return '#fffbeb';
+  if (lower.includes('amber-100') || lower.includes('0.962')) return '#fef3c7';
+  if (lower.includes('amber-200') || lower.includes('0.924')) return '#fde68a';
+  if (lower.includes('emerald-600') || lower.includes('0.596')) return '#059669';
+  if (lower.includes('emerald-700') || lower.includes('0.508')) return '#047857';
+  if (lower.includes('blue-600')  || lower.includes('0.546')) return '#2563eb';
+  if (lower.includes('blue-700')  || lower.includes('0.488')) return '#1d4ed8';
+  if (lower.includes('red-600')   || lower.includes('0.577')) return '#dc2626';
+
+  // 3. Fallback bóc tách kênh độ sáng L trong cú pháp oklch(L C H ...)
+  const m = colorStr.match(/oklch\(\s*([\d.]+)/);
+  if (m && m[1]) {
+    const l = parseFloat(m[1]);
+    if (l >= 0.95) return '#ffffff';
+    if (l >= 0.85) return '#e2e8f0';
+    if (l >= 0.65) return '#94a3b8';
+    if (l >= 0.45) return '#475569';
+    if (l >= 0.25) return '#1e293b';
+    return '#0f172a';
+  }
+
+  return '#0f172a';
+}
+
+/**
+ * Duyệt qua toàn bộ bản clone DOM của html2canvas để ép toàn bộ thuộc tính màu oklch
+ * sang mã HEX / RGB an toàn mà html2canvas hỗ trợ 100%.
+ */
+function sanitizeDocumentOklchColors(clonedDoc: Document, clonedEl: HTMLElement) {
+  // 1. Thay thế mọi chuỗi oklch(...) trong các thẻ <style> của clonedDoc
+  try {
+    const styleTags = clonedDoc.querySelectorAll('style');
+    styleTags.forEach((styleTag) => {
+      if (styleTag.textContent && (styleTag.textContent.includes('oklch') || styleTag.textContent.includes('lab('))) {
+        styleTag.textContent = styleTag.textContent.replace(/oklch\([^)]+\)/gi, (match) => {
+          return convertOklchToRgb(match);
+        });
+      }
+    });
+  } catch {
+    // bỏ qua
+  }
+
+  // 2. Duyệt qua toàn bộ phần tử trong clonedEl và các thẻ con
+  try {
+    const allElements = [clonedEl, ...Array.from(clonedEl.getElementsByTagName('*'))] as HTMLElement[];
+    const colorProps = [
+      'color',
+      'background-color',
+      'border-color',
+      'border-top-color',
+      'border-right-color',
+      'border-bottom-color',
+      'border-left-color',
+      'outline-color',
+      'text-decoration-color',
+      'fill',
+      'stroke'
+    ];
+
+    allElements.forEach((el) => {
+      if (!el || !el.style) return;
+      try {
+        const computed = window.getComputedStyle(el);
+        colorProps.forEach((prop) => {
+          const val = computed.getPropertyValue(prop);
+          if (val && (val.includes('oklch') || val.includes('lab') || val.includes('color('))) {
+            const safe = convertOklchToRgb(val);
+            el.style.setProperty(prop, safe, 'important');
+          }
+        });
+
+        // Xử lý box-shadow nếu chứa oklch
+        const shadow = computed.getPropertyValue('box-shadow');
+        if (shadow && shadow.includes('oklch')) {
+          const safeShadow = shadow.replace(/oklch\([^)]+\)/gi, (m) => convertOklchToRgb(m));
+          el.style.setProperty('box-shadow', safeShadow, 'important');
+        }
+      } catch {
+        // bỏ qua
+      }
+    });
+  } catch {
+    // bỏ qua
+  }
+
+  // 3. Chèn thêm style cưỡng chế mã màu HEX an toàn vào clonedDoc.head
+  try {
+    const override = clonedDoc.createElement('style');
+    override.id = 'html2canvas-safe-colors-override';
+    override.textContent = `
+      *, *::before, *::after {
+        --tw-border-opacity: 1 !important;
+      }
+      .printable-area {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border-color: #e2e8f0 !important;
+      }
+    `;
+    clonedDoc.head.appendChild(override);
+  } catch {
+    // bỏ qua
+  }
+}
 
 interface PrintInvoiceModalProps {
   order: Order | null;
@@ -91,7 +243,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
   };
 
   // 1. Khi người dùng bấm nút "Sao chép ảnh hóa đơn (Gửi Zalo)":
-  // Render khung hóa đơn thành thẻ canvas & Blob, sau đó NGAY LẬP TỨC mở Modal xem trước
+  // Render khung hóa đơn thành thẻ canvas & Blob (khử hoàn toàn lỗi oklch), sau đó NGAY LẬP TỨC mở Modal xem trước
   const handleCopyInvoiceImage = async () => {
     if (!invoiceRef.current) return;
     setIsCopyingImage(true);
@@ -109,14 +261,43 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
         }
       }
 
-      // Convert invoiceRef element to high-res canvas (scale: 2 for crisp retina/smartphone rendering)
-      const canvas = await html2canvas(invoiceRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      });
+      let canvas: HTMLCanvasElement | null = null;
+      let renderEngineUsed = 'html2canvas';
+
+      // BƯỚC 1: Thử render bằng html2canvas kèm cấu hình onclone xử lý triệt để mã màu oklch
+      try {
+        canvas = await html2canvas(invoiceRef.current, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          onclone: (clonedDoc, clonedEl) => {
+            // Tự động thay thế hoặc ép các thuộc tính màu dạng oklch(...) sang định dạng màu an toàn tương đương (mã HEX / rgb)
+            sanitizeDocumentOklchColors(clonedDoc, clonedEl);
+          },
+          ignoreElements: (element) => {
+            // Bỏ qua các phần tử không in như nút bấm, thanh điều khiển, no-print
+            return element.classList?.contains('no-print') || element.getAttribute('data-no-print') === 'true';
+          }
+        });
+      } catch (h2cError: any) {
+        console.warn('html2canvas gặp sự cố (sẽ tự động kích hoạt bộ vẽ 2D Canvas Engine):', h2cError);
+        renderEngineUsed = '2d-canvas';
+      }
+
+      // BƯỚC 2: DỰ PHÒNG SIÊU BỀN - Nếu html2canvas gặp lỗi môi trường CSS, dùng Pure 2D Canvas Engine
+      if (!canvas) {
+        try {
+          canvas = await generateInvoicePortraitCanvas(order, workshop);
+        } catch (canvas2dErr: any) {
+          throw new Error(`Không thể vẽ ảnh hóa đơn: ${canvas2dErr?.message || 'Lỗi render'}`);
+        }
+      }
+
+      if (!canvas) {
+        throw new Error('Không thể tạo canvas hóa đơn');
+      }
 
       // Lưu canvas vào DOM với ID chuẩn 'invoice-canvas-id' theo đúng yêu cầu kỹ thuật
       let existingCanvas = document.getElementById('invoice-canvas-id') as HTMLCanvasElement | null;
@@ -135,7 +316,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
 
       // Convert canvas to PNG blob
       const blob: Blob | null = await new Promise((resolve) => {
-        canvas.toBlob((b) => resolve(b), 'image/png', 0.95);
+        canvas!.toBlob((b) => resolve(b), 'image/png', 0.95);
       });
 
       const dataUrl = canvas.toDataURL('image/png');
@@ -149,7 +330,10 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
       });
     } catch (err: any) {
       console.error('Lỗi khi chụp ảnh hóa đơn:', err);
-      setCopyToast(`⚠️ Không thể chụp ảnh tự động: ${err?.message || 'Vui lòng thử lại'}`);
+      const errMsg = err?.message || 'Không thể tạo ảnh hóa đơn';
+      setCopyToast(`⚠️ Không thể chụp ảnh tự động: ${errMsg}`);
+      setDirectCopyError(true);
+      setDirectCopyMsg(`Chi tiết lỗi: ${errMsg}`);
     } finally {
       setIsCopyingImage(false);
     }
@@ -159,51 +343,44 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
   // Nút "📋 SAO CHÉP ẢNH VÀO BỘ NHỚ TẠM" gắn thẳng sự kiện onClick trực tiếp của người dùng
   const handleDirectClipboardCopy = async () => {
     try {
-      const canvas = document.getElementById('invoice-canvas-id') as HTMLCanvasElement | null;
-      if (canvas) {
-        canvas.toBlob(async (blob) => {
-          if (!blob) {
-            setDirectCopyError(true);
-            setDirectCopyMsg('Không thể trích xuất dữ liệu ảnh từ canvas');
-            return;
-          }
-          try {
-            if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-              const item = new ClipboardItem({ 'image/png': blob });
-              await navigator.clipboard.write([item]);
-              setDirectCopySuccess(true);
-              setDirectCopyError(false);
-              setDirectCopyMsg('Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
-            } else {
-              throw new Error('Trình duyệt chưa hỗ trợ ClipboardItem');
-            }
-          } catch (clipErr) {
-            console.error('Lỗi clipboard API:', clipErr);
-            // Fallback: Nếu trình duyệt vẫn chặn, cho phép người dùng click chuột phải vào ảnh trong Modal chọn "Sao chép hình ảnh" (Copy Image)
-            setDirectCopyError(true);
-            setDirectCopySuccess(false);
-            setDirectCopyMsg('Trình duyệt hạn chế ghi trực tiếp. Bạn hãy click chuột phải vào ảnh bên dưới chọn "Sao chép hình ảnh" (Copy image) để dán Zalo!');
-          }
-        }, 'image/png');
-      } else if (copyPreviewModal.blob) {
-        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-          const item = new ClipboardItem({ 'image/png': copyPreviewModal.blob });
-          await navigator.clipboard.write([item]);
-          setDirectCopySuccess(true);
-          setDirectCopyError(false);
-          setDirectCopyMsg('Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
-        } else {
-          throw new Error('Trình duyệt chưa hỗ trợ ClipboardItem');
+      let blob: Blob | null = copyPreviewModal.blob;
+
+      if (!blob) {
+        const canvas = document.getElementById('invoice-canvas-id') as HTMLCanvasElement | null;
+        if (canvas) {
+          blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 0.95));
         }
+      }
+
+      // Fallback lấy blob từ dataURL nếu chưa có
+      if (!blob && copyPreviewModal.imageUrl) {
+        try {
+          const resp = await fetch(copyPreviewModal.imageUrl);
+          blob = await resp.blob();
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!blob) {
+        throw new Error('Chưa tìm thấy dữ liệu ảnh để sao chép');
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+        const item = new ClipboardItem({ 'image/png': blob });
+        await navigator.clipboard.write([item]);
+        setDirectCopySuccess(true);
+        setDirectCopyError(false);
+        setDirectCopyMsg('Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
       } else {
-        throw new Error('Chưa tìm thấy ảnh hóa đơn trong bộ nhớ tạm');
+        throw new Error('Trình duyệt chưa hỗ trợ ClipboardItem');
       }
     } catch (err: any) {
       console.error('Lỗi sao chép ảnh:', err);
       // Fallback: Hướng dẫn người dùng click chuột phải vào ảnh
       setDirectCopyError(true);
       setDirectCopySuccess(false);
-      setDirectCopyMsg('Trình duyệt hạn chế ghi trực tiếp. Bạn hãy click chuột phải vào ảnh bên dưới chọn "Sao chép hình ảnh" (Copy image) để dán Zalo!');
+      setDirectCopyMsg(`Trình duyệt hạn chế ghi trực tiếp (${err?.message || 'Chặn quyền'}). Bạn hãy click chuột phải vào ảnh bên dưới chọn "Sao chép hình ảnh" (Copy image) để dán Zalo!`);
     }
   };
 
@@ -502,8 +679,11 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                 <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-950 flex items-start gap-2.5">
                   <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <strong className="block font-bold mb-0.5">Trình duyệt hạn chế sao chép tự động:</strong>
-                    <span>Hãy <strong>click chuột phải vào ảnh bên dưới</strong> (hoặc nhấn giữ trên điện thoại) và chọn <strong>"Sao chép hình ảnh" (Copy image)</strong>, sau đó mở Zalo và ấn <strong>Ctrl + V</strong> để dán gửi khách!</span>
+                    <strong className="block font-bold mb-0.5">Thông báo trạng thái:</strong>
+                    <p className="font-semibold text-amber-900 mb-1">{directCopyMsg || 'Trình duyệt hạn chế sao chép ảnh tự động vào bộ nhớ tạm.'}</p>
+                    <p className="text-[11px] text-amber-800">
+                      👉 <strong>Cách xử lý nhanh:</strong> Click <strong>chuột phải vào ảnh hóa đơn bên dưới</strong> (hoặc nhấn giữ trên điện thoại) và chọn <strong>"Sao chép hình ảnh" (Copy image)</strong>, sau đó mở Zalo và ấn <strong>Ctrl + V</strong> để gửi khách! Hoặc bấm nút <strong>"Tải ảnh PNG"</strong> để gửi file.
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -601,6 +781,11 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
         <div className="overflow-y-auto flex-1 bg-slate-100/60 p-3 sm:p-6 flex justify-center">
           <div
             ref={invoiceRef}
+            style={{
+              backgroundColor: '#ffffff',
+              color: '#0f172a',
+              borderColor: '#e2e8f0'
+            }}
             className={`printable-area bg-white text-slate-900 shadow-lg border border-slate-200 transition-all ${
               paperSize === 'a4'
                 ? 'w-full max-w-[800px] p-6 sm:p-8 rounded-xl'
@@ -634,8 +819,11 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                     <MapPin className="w-3.5 h-3.5 text-slate-400" />
                     <span>{workshop.address}</span>
                   </p>
-                  <p className="text-slate-500 text-[10px]">
-                    STK Techcombank: <strong className="font-mono text-slate-800">{workshop.bankAccount.accountNumber}</strong> ({workshop.bankAccount.accountHolder})
+                  <p className="flex items-center justify-end gap-1 font-black text-red-600 text-[11px] sm:text-xs tracking-tight pt-0.5" style={{ color: '#dc2626' }}>
+                    <Clock className="w-3.5 h-3.5 text-red-600 shrink-0" style={{ color: '#dc2626' }} />
+                    <span className="font-black text-red-600" style={{ color: '#dc2626' }}>
+                      Thời gian làm việc từ 8H - 20h Từ thứ 2 đến thứ 7
+                    </span>
                   </p>
                 </div>
               </div>
@@ -710,10 +898,6 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {order.items.map((item, idx) => {
-                    const codeUpper = (item.materialCoreCode || '').toUpperCase().trim();
-                    const isFomex = codeUpper.includes('FOMEX') || (item.materialCoreName && item.materialCoreName.toLowerCase().includes('fomex'));
-                    const isNoCore = codeUpper === 'NONE' || codeUpper === 'KHONG' || codeUpper === 'KHONG_COT' || codeUpper === '0';
-
                     return (
                       <tr key={item.id || idx} className="hover:bg-slate-50/50">
                         {/* STT */}
@@ -731,41 +915,30 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                           </span>
                         </td>
 
-                        {/* Tên hàng & Quy cách ảnh: Tách dòng rõ ràng giữa tên và mã/cốt */}
+                        {/* Tên hàng & Quy cách ảnh: Tách dòng rõ ràng giữa tên và mã sản phẩm (không hiển thị cốt vật tư cho khách) */}
                         <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'} text-slate-900`}>
                           {/* Tên sản phẩm: In đậm, cỡ chữ dễ đọc, ngắt dòng tự nhiên */}
                           <div className={`font-bold text-slate-950 ${isA5 ? 'text-xs' : 'text-[13px]'} break-words leading-snug`}>
                             {item.productName}
                           </div>
 
-                          {/* Dòng riêng bên dưới: Mã sản phẩm & Cốt vật tư & Ghi chú */}
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            {item.productCode && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[10px] text-gray-500 bg-gray-100 border border-gray-200 font-semibold">
-                                <span>Mã:</span>
-                                <strong className="text-gray-700">{item.productCode}</strong>
-                              </span>
-                            )}
+                          {/* Dòng riêng bên dưới: Mã sản phẩm & Ghi chú (KHÔNG hiển thị cốt vật tư cho khách hàng) */}
+                          {(item.productCode || item.note) && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {item.productCode && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[10px] text-gray-500 bg-gray-100 border border-gray-200 font-semibold">
+                                  <span>Mã:</span>
+                                  <strong className="text-gray-700">{item.productCode}</strong>
+                                </span>
+                              )}
 
-                            {codeUpper && (
-                              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold border ${
-                                isNoCore
-                                  ? 'bg-gray-50 text-gray-500 border-gray-200'
-                                  : isFomex
-                                  ? 'bg-sky-50 text-sky-800 border-sky-200'
-                                  : 'bg-amber-50 text-amber-800 border-amber-200'
-                              }`}>
-                                <span>{isNoCore ? '🚫' : (isFomex ? '✨' : '🪵')}</span>
-                                <span>{isNoCore ? 'Không cốt' : `Cốt: ${codeUpper}`}</span>
-                              </span>
-                            )}
-
-                            {item.note && (
-                              <span className="text-[10px] text-gray-500 italic">
-                                ↳ Ghi chú: {item.note}
-                              </span>
-                            )}
-                          </div>
+                              {item.note && (
+                                <span className="text-[10px] text-gray-500 italic">
+                                  ↳ Ghi chú: {item.note}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </td>
 
                         {/* Khổ */}

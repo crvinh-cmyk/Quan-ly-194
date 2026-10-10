@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Material, MaterialCategory, StockImportReceipt, StockImportItem, Order, Product } from '../types';
+import { Material, MaterialCategory, StockImportReceipt, StockImportItem, Order, Product, InkImportRecord } from '../types';
 import { formatCurrency, formatNumber, formatDateVN } from '../utils/formatters';
 import { getMaterialUsageSummary, calculateOrderBOM, createMaterialDeductionRecords } from '../utils/materialBOM';
 import {
@@ -7,9 +7,10 @@ import {
   ArrowDownLeft, FileText, Calendar, DollarSign, PackagePlus,
   Edit, Trash2, SlidersHorizontal, RefreshCw, X, ArrowUpDown, Truck, ChevronRight,
   BookOpen, Sparkles, ShoppingBag, ArrowRight, Building2, Filter, Layers, PieChart,
-  Settings, Check, RotateCcw, Package
+  Settings, Check, RotateCcw, Package, Droplet
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
+import { InkInventoryTracking } from './InkInventoryTracking';
 import {
   subscribeInventoryPresets,
   saveInventoryPresetsToFirestore,
@@ -28,11 +29,15 @@ interface InventoryManagementViewProps {
   stockImports: StockImportReceipt[];
   orders?: Order[];
   products?: Product[];
+  inkImports?: InkImportRecord[];
   onSaveMaterial: (material: Material) => void;
   onDeleteMaterial: (materialId: string) => void;
   onSaveStockImport: (receipt: StockImportReceipt) => void;
   onDeleteStockImport?: (receiptId: string) => void;
   onAdjustStock: (materialId: string, newQuantity: number, reason: string) => void;
+  onSaveInkImport?: (record: InkImportRecord) => void;
+  onDeleteInkImport?: (recordId: string) => void;
+  onResetInkYear?: (year: number) => void;
   onClearAllInventory?: () => void;
   onClearAllStockImports?: () => void;
   onResetStockToZero?: () => void;
@@ -44,18 +49,22 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
   stockImports,
   orders = [],
   products = [],
+  inkImports = [],
   onSaveMaterial,
   onDeleteMaterial,
   onSaveStockImport,
   onDeleteStockImport,
   onAdjustStock,
+  onSaveInkImport,
+  onDeleteInkImport,
+  onResetInkYear,
   onClearAllInventory,
   onClearAllStockImports,
   onResetStockToZero,
   onReloadDefaultMaterials
 }) => {
-  // Active Sub-tab: 'inventory' | 'supplier_expenses' | 'history' | 'sales_deductions'
-  const [activeSubTab, setActiveSubTab] = useState<'inventory' | 'supplier_expenses' | 'history' | 'sales_deductions'>('inventory');
+  // Active Sub-tab: 'inventory' | 'supplier_expenses' | 'ink_tracking' | 'history' | 'sales_deductions'
+  const [activeSubTab, setActiveSubTab] = useState<'inventory' | 'supplier_expenses' | 'ink_tracking' | 'history' | 'sales_deductions'>('inventory');
   
   // Filters for Material Inventory
   const [searchQuery, setSearchQuery] = useState('');
@@ -724,6 +733,22 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
           </div>
           <p className="text-[11px] text-slate-500 mt-1">{stockImports.length} đợt nhập hàng</p>
         </div>
+
+        {/* Card 7: Theo Dõi Mực In 12 Màu */}
+        <div
+          onClick={() => setActiveSubTab('ink_tracking')}
+          className="bg-cyan-50/70 border border-cyan-200 hover:bg-cyan-100/70 rounded-xl p-4 shadow-sm transition cursor-pointer"
+          title="Bấm để xem chi tiết theo dõi lượng mực in 12 màu Lucia Pro"
+        >
+          <div className="flex items-center justify-between text-cyan-800 mb-1">
+            <span className="text-xs font-black uppercase tracking-wider">Mực In 12 Màu</span>
+            <Droplet className="w-4 h-4 text-cyan-600" />
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-cyan-950 font-mono">
+            {inkImports.length} <span className="text-xs font-normal text-cyan-700">đợt nhập</span>
+          </div>
+          <p className="text-[11px] text-cyan-700 font-medium mt-1">Canon Lucia Pro (12 màu)</p>
+        </div>
       </div>
 
       {/* Sub Tabs */}
@@ -783,6 +808,19 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
         >
           <ShoppingBag className="w-4 h-4" />
           <span>Vật Tư Trừ Theo Đơn Bán Hàng</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('ink_tracking')}
+          className={`flex items-center gap-2 px-4 py-2.5 font-black text-sm border-b-2 transition cursor-pointer shrink-0 ${
+            activeSubTab === 'ink_tracking'
+              ? 'border-cyan-500 text-cyan-800 bg-cyan-50/70 shadow-2xs'
+              : 'border-transparent text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Droplet className="w-4 h-4 text-cyan-600" />
+          <span>Theo Dõi Mực In 12 Màu ({inkImports.length})</span>
         </button>
 
         <div className="ml-auto hidden lg:block">
@@ -1605,6 +1643,16 @@ export const InventoryManagementView: React.FC<InventoryManagementViewProps> = (
             </div>
           </div>
         </div>
+      )}
+
+      {/* SUB-TAB 5: THEO DÕI MỰC IN 12 MÀU (CANON LUCIA PRO) */}
+      {activeSubTab === 'ink_tracking' && (
+        <InkInventoryTracking
+          inkImports={inkImports}
+          onSaveInkImport={onSaveInkImport || (() => {})}
+          onDeleteInkImport={onDeleteInkImport || (() => {})}
+          onResetInkYear={onResetInkYear || (() => {})}
+        />
       )}
 
       {/* MODAL 1: ADD / EDIT MATERIAL (Đã bỏ giá nhập) */}

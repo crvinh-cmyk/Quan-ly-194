@@ -139,12 +139,12 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
   ctx.font = `400 25px ${FONT_SANS}`;
   ctx.fillText(workshop.address, padX + padW, curY + 76);
 
-  ctx.fillStyle = '#1e293b';
-  ctx.font = `600 25px ${FONT_SANS}`;
+  ctx.fillStyle = '#dc2626';
+  ctx.font = `800 27px ${FONT_SANS}`;
   ctx.fillText(
-    `Techcombank: ${workshop.bankAccount.accountNumber} (${workshop.bankAccount.accountHolder})`,
+    'Thời gian làm việc từ 8H - 20h Từ thứ 2 đến thứ 7',
     padX + padW,
-    curY + 114
+    curY + 116
   );
 
   // Move past header and space before divider
@@ -313,16 +313,17 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
     if (displayTitle.length > 34) displayTitle = displayTitle.substring(0, 32) + '...';
     ctx.fillText(displayTitle, colX[3] + 15, textMidY - 14);
 
-    // Dòng 2: Mã SP & Cốt vật tư (phân tách trực quan phía dưới)
+    // Dòng 2: Mã SP & Ghi chú (không hiển thị cốt vật tư cho khách hàng)
     ctx.font = `500 20px ${FONT_SANS}`;
     ctx.fillStyle = '#64748b';
     const subParts: string[] = [];
     if (item.productCode) subParts.push(`Mã: ${item.productCode}`);
-    if (item.materialCoreCode) subParts.push(`Cốt: ${item.materialCoreCode}`);
     if (item.note) subParts.push(`Ghi chú: ${item.note}`);
     let subText = subParts.join('  •  ');
     if (subText.length > 44) subText = subText.substring(0, 42) + '...';
-    ctx.fillText(subText, colX[3] + 15, textMidY + 18);
+    if (subParts.length > 0) {
+      ctx.fillText(subText, colX[3] + 15, textMidY + 18);
+    }
 
     // Khổ
     ctx.textAlign = 'center';

@@ -8,8 +8,8 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo, ProductCostItem, ProductCostMap } from '../types';
-import { DEFAULT_WORKSHOP_INFO } from '../data/initialData';
+import { Product, Customer, Order, Material, StockImportReceipt, WorkshopInfo, StudioCombo, ProductCostItem, ProductCostMap, InkImportRecord, InkColorCode } from '../types';
+import { DEFAULT_WORKSHOP_INFO, DEFAULT_INK_IMPORTS } from '../data/initialData';
 
 // User info interface for tagging created/updated records
 export interface AuthUserContext {
@@ -91,7 +91,8 @@ export const COLLECTIONS = {
   MATERIALS: 'materials',
   PURCHASES: 'purchases',
   SETTINGS: 'settings',
-  COMBOS: 'combos'
+  COMBOS: 'combos',
+  INK_IMPORTS: 'ink_imports'
 } as const;
 
 // =================================================================
@@ -697,6 +698,165 @@ export async function saveProductCostsToFirestore(
   };
   const enriched = attachUserInfo(payload, user);
   await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+}
+
+// =================================================================
+// 9. INK IMPORTS (Theo dõi lượng mực nhập 12 màu Canon Lucia Pro)
+// =================================================================
+const INK_IMPORTS_STORAGE_KEY = 'tiem_in_194_ink_imports_cache';
+
+export function getLocalInkImports(): InkImportRecord[] {
+  try {
+    const raw = localStorage.getItem(INK_IMPORTS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Error reading local ink imports:', e);
+  }
+  return DEFAULT_INK_IMPORTS;
+}
+
+export function saveLocalInkImports(imports: InkImportRecord[]) {
+  try {
+    localStorage.setItem(INK_IMPORTS_STORAGE_KEY, JSON.stringify(imports));
+  } catch (e) {
+    console.error('Error saving local ink imports:', e);
+  }
+}
+
+export function subscribeInkImports(
+  onData: (records: InkImportRecord[]) => void,
+  onError?: (err: Error) => void
+) {
+  const colRef = collection(db, COLLECTIONS.INK_IMPORTS);
+  return onSnapshot(colRef, { includeMetadataChanges: false }, (snapshot) => {
+    const list: InkImportRecord[] = [];
+    snapshot.forEach(docSnap => {
+      const raw = docSnap.data();
+      const recDate = normalizeDateOnly(raw.date);
+      const recYear = typeof raw.year === 'number' ? raw.year : new Date(recDate).getFullYear();
+      
+      const record: InkImportRecord = {
+        id: docSnap.id,
+        receiptNumber: raw.receiptNumber || `NK-MUC-${recYear}-${docSnap.id.slice(-4)}`,
+        date: recDate,
+        year: recYear,
+        supplier: raw.supplier || 'SVP',
+        items: (raw.items && typeof raw.items === 'object') ? raw.items : {} as Record<InkColorCode, number>,
+        totalQuantity: Number(raw.totalQuantity) || 0,
+        unit: raw.unit || 'Bình',
+        costPricePerBottle: raw.costPricePerBottle ? Number(raw.costPricePerBottle) : undefined,
+        totalCost: raw.totalCost ? Number(raw.totalCost) : undefined,
+        notes: raw.notes || '',
+        createdAt: normalizeFirestoreDate(raw.createdAt),
+        updatedAt: normalizeFirestoreDate(raw.updatedAt),
+        userId: raw.userId,
+        createdBy: raw.createdBy
+      };
+      list.push(record);
+    });
+
+    if (list.length === 0 && snapshot.empty) {
+      // First run or empty: Seed initial defaults for instant usability
+      const cached = getLocalInkImports();
+      if (cached.length > 0) {
+        onData(cached);
+        // Async background seed to Firestore
+        cached.forEach(rec => {
+          saveInkImportToFirestore(rec).catch(() => {});
+        });
+        return;
+      }
+    }
+
+    // Sort newest date first
+    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    saveLocalInkImports(list);
+    onData(list);
+  }, (error) => {
+    console.error('Firestore ink_imports onSnapshot error:', error);
+    // Offline fallback
+    const cached = getLocalInkImports();
+    onData(cached);
+    if (onError) onError(error);
+  });
+}
+
+export async function saveInkImportToFirestore(
+  record: InkImportRecord,
+  user?: AuthUserContext | null
+): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.INK_IMPORTS, record.id);
+  const recDate = normalizeDateOnly(record.date);
+  const recYear = record.year || new Date(recDate).getFullYear();
+  
+  // Calculate total if not set
+  let totalQty = record.totalQuantity;
+  if (!totalQty && record.items) {
+    totalQty = Object.values(record.items).reduce((s, v) => s + (Number(v) || 0), 0);
+  }
+
+  const enriched = attachUserInfo({
+    ...record,
+    date: recDate,
+    year: recYear,
+    supplier: record.supplier || 'SVP',
+    totalQuantity: totalQty,
+    createdAt: normalizeFirestoreDate(record.createdAt),
+    updatedAt: new Date().toISOString()
+  }, user);
+
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+
+  // Update local cache
+  const current = getLocalInkImports();
+  const existingIdx = current.findIndex(r => r.id === record.id);
+  let updatedList: InkImportRecord[];
+  if (existingIdx >= 0) {
+    updatedList = [...current];
+    updatedList[existingIdx] = enriched as InkImportRecord;
+  } else {
+    updatedList = [enriched as InkImportRecord, ...current];
+  }
+  saveLocalInkImports(updatedList);
+}
+
+export async function deleteInkImportFromFirestore(recordId: string): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.INK_IMPORTS, recordId);
+  await deleteDoc(docRef);
+  const current = getLocalInkImports();
+  saveLocalInkImports(current.filter(r => r.id !== recordId));
+}
+
+export async function resetInkYearInFirestore(targetYear: number): Promise<void> {
+  const snap = await getDocs(collection(db, COLLECTIONS.INK_IMPORTS));
+  const batch = writeBatch(db);
+  let matchCount = 0;
+  snap.forEach(d => {
+    const raw = d.data();
+    const dYear = typeof raw.year === 'number' ? raw.year : new Date(raw.date || '').getFullYear();
+    if (dYear === targetYear) {
+      batch.delete(d.ref);
+      matchCount++;
+    }
+  });
+  if (matchCount > 0) {
+    await batch.commit();
+  }
+  const current = getLocalInkImports();
+  saveLocalInkImports(current.filter(r => r.year !== targetYear));
+}
+
+export async function clearAllInkImportsFromFirestore(): Promise<void> {
+  const snap = await getDocs(collection(db, COLLECTIONS.INK_IMPORTS));
+  const batch = writeBatch(db);
+  snap.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+  saveLocalInkImports([]);
 }
 
 

@@ -215,4 +215,50 @@ export interface ProductCostItem {
 
 export type ProductCostMap = Record<string, ProductCostItem>;
 
+// =================================================================
+// ĐỊNH NGHĨA HỆ MỰC IN 12 MÀU CHUYÊN NGHIỆP (CANON LUCIA PRO / IMAGEPROGRAF)
+// PM, R, C, PGY, PBK, MBK, CO, GY, B, Y, M, PC
+// =================================================================
+export type InkColorCode =
+  | 'PM'
+  | 'R'
+  | 'C'
+  | 'PGY'
+  | 'PBK'
+  | 'MBK'
+  | 'CO'
+  | 'GY'
+  | 'B'
+  | 'Y'
+  | 'M'
+  | 'PC';
+
+export interface InkColorMeta {
+  code: InkColorCode;
+  name: string;
+  vietnameseName: string;
+  hex: string;
+  textColor: string;
+  badgeBg: string;
+  description: string;
+}
+
+export interface InkImportRecord {
+  id: string;
+  receiptNumber: string; // VD: NK-MUC-2026-001
+  date: string; // YYYY-MM-DD
+  year: number; // 2026, 2025...
+  supplier: string; // Mặc định 'SVP'
+  items: Record<InkColorCode, number>; // Số lượng bình nhập theo từng màu { PM: 2, R: 1, ... }
+  totalQuantity: number; // Tổng số bình nhập đợt này
+  unit: string; // 'Bình' | 'Hộp' | 'Chai'
+  costPricePerBottle?: number; // Đơn giá nhập tham khảo (nếu có)
+  totalCost?: number; // Tổng giá trị nhập (nếu có)
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+  userId?: string;
+  createdBy?: string;
+}
+
 

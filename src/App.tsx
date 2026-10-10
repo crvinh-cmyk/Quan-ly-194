@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Product, Customer, Order, OrderStatus, WorkshopInfo, Material, StockImportReceipt, StudioCombo } from './types';
+import { Product, Customer, Order, OrderStatus, WorkshopInfo, Material, StockImportReceipt, StudioCombo, InkImportRecord } from './types';
 import { calculateCustomerDebt } from './utils/storage';
 import {
   subscribeProducts, saveProductToFirestore, deleteProductFromFirestore,
@@ -9,6 +9,7 @@ import {
   subscribeStockImports, saveStockImportToFirestore, deleteStockImportFromFirestore, clearAllPurchasesFromFirestore,
   subscribeCombos, saveComboToFirestore, deleteComboFromFirestore,
   subscribeWorkshopInfo, saveWorkshopInfoToFirestore,
+  subscribeInkImports, saveInkImportToFirestore, deleteInkImportFromFirestore, resetInkYearInFirestore,
   AuthUserContext
 } from './services/firestoreService';
 import { subscribeAuthState, logoutUser } from './services/authService';
@@ -61,6 +62,7 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [stockImports, setStockImports] = useState<StockImportReceipt[]>([]);
+  const [inkImports, setInkImports] = useState<InkImportRecord[]>([]);
   const [combos, setCombos] = useState<StudioCombo[]>([]);
   const [workshop, setWorkshop] = useState<WorkshopInfo>(DEFAULT_WORKSHOP_INFO);
   const [firestoreStatus, setFirestoreStatus] = useState<'connected' | 'syncing' | 'offline'>('syncing');
@@ -195,6 +197,11 @@ export default function App() {
       markLoaded();
     });
 
+    const unsubInk = subscribeInkImports((data) => {
+      setInkImports(data);
+      markLoaded();
+    });
+
     return () => {
       clearTimeout(safetyTimer);
       unsubWorkshop();
@@ -204,6 +211,7 @@ export default function App() {
       unsubMaterials();
       unsubStockImports();
       unsubCombos();
+      unsubInk();
     };
   }, [currentUser]);
 
@@ -245,6 +253,19 @@ export default function App() {
 
   const handleDeleteStockImport = (receiptId: string) => {
     deleteStockImportFromFirestore(receiptId).catch(console.error);
+  };
+
+  // Ink Import CRUD handlers (Direct Firestore)
+  const handleSaveInkImport = (record: InkImportRecord) => {
+    saveInkImportToFirestore(record, userContext).catch(console.error);
+  };
+
+  const handleDeleteInkImport = (recordId: string) => {
+    deleteInkImportFromFirestore(recordId).catch(console.error);
+  };
+
+  const handleResetInkYear = (year: number) => {
+    resetInkYearInFirestore(year).catch(console.error);
   };
 
   // Stock adjustment / use (Lưu trực tiếp Firestore)
@@ -650,12 +671,16 @@ export default function App() {
           <InventoryManagementView
             materials={materials}
             stockImports={stockImports}
+            inkImports={inkImports}
             orders={orders}
             products={products}
             onSaveMaterial={handleSaveMaterial}
             onDeleteMaterial={handleDeleteMaterial}
             onSaveStockImport={handleSaveStockImport}
             onDeleteStockImport={handleDeleteStockImport}
+            onSaveInkImport={handleSaveInkImport}
+            onDeleteInkImport={handleDeleteInkImport}
+            onResetInkYear={handleResetInkYear}
             onAdjustStock={handleAdjustStock}
             onClearAllInventory={handleClearAllInventory}
             onClearAllStockImports={handleClearAllStockImports}
