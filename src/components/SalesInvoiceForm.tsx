@@ -6,7 +6,7 @@ import {
   Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
   ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
   Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X, ShoppingBag, Building2,
-  ExternalLink
+  ExternalLink, Copy
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 import { StudioComboModal } from './StudioComboModal';
@@ -962,14 +962,25 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {lastSavedOrder && (
-              <button
-                type="button"
-                onClick={() => onSaveOrder(lastSavedOrder, true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                In & Xuất Phiếu Hóa Đơn
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onSaveOrder(lastSavedOrder, true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-xs cursor-pointer"
+                  title="Mở hóa đơn và sao chép ảnh gửi Zalo trực tiếp"
+                >
+                  <Copy className="w-3.5 h-3.5 text-emerald-200" />
+                  Sao chép ảnh gửi Zalo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSaveOrder(lastSavedOrder, true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  In & Xuất Phiếu Hóa Đơn
+                </button>
+              </>
             )}
             <button
               type="button"

@@ -24,10 +24,20 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
   const [exportSuccessMsg, setExportSuccessMsg] = useState('');
   const [exportedJpgUrl, setExportedJpgUrl] = useState<string>('');
   const [exportedFilename, setExportedFilename] = useState<string>('');
-  const [fallbackModal, setFallbackModal] = useState<{ isOpen: boolean; imageUrl: string }>({
+  
+  // State for Instant Preview & Synchronous Clipboard Copy Modal
+  const [copyPreviewModal, setCopyPreviewModal] = useState<{
+    isOpen: boolean;
+    imageUrl: string;
+    blob: Blob | null;
+  }>({
     isOpen: false,
-    imageUrl: ''
+    imageUrl: '',
+    blob: null
   });
+  const [directCopySuccess, setDirectCopySuccess] = useState(false);
+  const [directCopyError, setDirectCopyError] = useState(false);
+  const [directCopyMsg, setDirectCopyMsg] = useState('');
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   // Dynamically update print @page style based on chosen paper size
@@ -80,11 +90,15 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
     window.print();
   };
 
-  // Copy invoice image to clipboard using html2canvas & Web Clipboard API (No file download, no disk waste)
+  // 1. Khi người dùng bấm nút "Sao chép ảnh hóa đơn (Gửi Zalo)":
+  // Render khung hóa đơn thành thẻ canvas & Blob, sau đó NGAY LẬP TỨC mở Modal xem trước
   const handleCopyInvoiceImage = async () => {
     if (!invoiceRef.current) return;
     setIsCopyingImage(true);
     setCopyToast('');
+    setDirectCopySuccess(false);
+    setDirectCopyError(false);
+    setDirectCopyMsg('');
 
     try {
       if (typeof document !== 'undefined' && document.fonts) {
@@ -104,43 +118,92 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
         logging: false
       });
 
+      // Lưu canvas vào DOM với ID chuẩn 'invoice-canvas-id' theo đúng yêu cầu kỹ thuật
+      let existingCanvas = document.getElementById('invoice-canvas-id') as HTMLCanvasElement | null;
+      if (!existingCanvas) {
+        existingCanvas = document.createElement('canvas');
+        existingCanvas.id = 'invoice-canvas-id';
+        existingCanvas.style.display = 'none';
+        document.body.appendChild(existingCanvas);
+      }
+      existingCanvas.width = canvas.width;
+      existingCanvas.height = canvas.height;
+      const ctx = existingCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(canvas, 0, 0);
+      }
+
       // Convert canvas to PNG blob
       const blob: Blob | null = await new Promise((resolve) => {
         canvas.toBlob((b) => resolve(b), 'image/png', 0.95);
       });
 
-      if (!blob) {
-        throw new Error('Không thể tạo file ảnh từ hóa đơn');
-      }
+      const dataUrl = canvas.toDataURL('image/png');
 
-      // Attempt to copy image directly to system clipboard
-      let copiedSuccess = false;
-      if (
-        typeof navigator !== 'undefined' &&
-        navigator.clipboard &&
-        typeof ClipboardItem !== 'undefined'
-      ) {
-        try {
-          const item = new ClipboardItem({ 'image/png': blob });
-          await navigator.clipboard.write([item]);
-          copiedSuccess = true;
-          setCopyToast('Đã copy ảnh hóa đơn! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
-          setTimeout(() => setCopyToast(''), 7000);
-        } catch (clipErr) {
-          console.warn('Direct ClipboardItem write failed, using fallback preview:', clipErr);
-        }
-      }
-
-      // Fallback if browser blocked clipboard writing or doesn't support ClipboardItem
-      if (!copiedSuccess) {
-        const url = URL.createObjectURL(blob);
-        setFallbackModal({ isOpen: true, imageUrl: url });
-      }
+      // Ngay lập tức mở Modal (Cửa sổ nổi) hiển thị trực quan bức ảnh hóa đơn vừa vẽ xong
+      // kèm nút bấm to rõ: "📋 SAO CHÉP ẢNH VÀO BỘ NHỚ TẠM"
+      setCopyPreviewModal({
+        isOpen: true,
+        imageUrl: dataUrl,
+        blob: blob
+      });
     } catch (err: any) {
       console.error('Lỗi khi chụp ảnh hóa đơn:', err);
-      setExportSuccessMsg(`⚠️ Không thể chụp ảnh tự động: ${err?.message || 'Vui lòng bấm Xuất Phiếu Hóa Đơn'}`);
+      setCopyToast(`⚠️ Không thể chụp ảnh tự động: ${err?.message || 'Vui lòng thử lại'}`);
     } finally {
       setIsCopyingImage(false);
+    }
+  };
+
+  // 2. Kỹ thuật Clipboard đồng bộ theo thao tác Click trực tiếp trong Modal:
+  // Nút "📋 SAO CHÉP ẢNH VÀO BỘ NHỚ TẠM" gắn thẳng sự kiện onClick trực tiếp của người dùng
+  const handleDirectClipboardCopy = async () => {
+    try {
+      const canvas = document.getElementById('invoice-canvas-id') as HTMLCanvasElement | null;
+      if (canvas) {
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            setDirectCopyError(true);
+            setDirectCopyMsg('Không thể trích xuất dữ liệu ảnh từ canvas');
+            return;
+          }
+          try {
+            if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+              const item = new ClipboardItem({ 'image/png': blob });
+              await navigator.clipboard.write([item]);
+              setDirectCopySuccess(true);
+              setDirectCopyError(false);
+              setDirectCopyMsg('Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
+            } else {
+              throw new Error('Trình duyệt chưa hỗ trợ ClipboardItem');
+            }
+          } catch (clipErr) {
+            console.error('Lỗi clipboard API:', clipErr);
+            // Fallback: Nếu trình duyệt vẫn chặn, cho phép người dùng click chuột phải vào ảnh trong Modal chọn "Sao chép hình ảnh" (Copy Image)
+            setDirectCopyError(true);
+            setDirectCopySuccess(false);
+            setDirectCopyMsg('Trình duyệt hạn chế ghi trực tiếp. Bạn hãy click chuột phải vào ảnh bên dưới chọn "Sao chép hình ảnh" (Copy image) để dán Zalo!');
+          }
+        }, 'image/png');
+      } else if (copyPreviewModal.blob) {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+          const item = new ClipboardItem({ 'image/png': copyPreviewModal.blob });
+          await navigator.clipboard.write([item]);
+          setDirectCopySuccess(true);
+          setDirectCopyError(false);
+          setDirectCopyMsg('Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
+        } else {
+          throw new Error('Trình duyệt chưa hỗ trợ ClipboardItem');
+        }
+      } else {
+        throw new Error('Chưa tìm thấy ảnh hóa đơn trong bộ nhớ tạm');
+      }
+    } catch (err: any) {
+      console.error('Lỗi sao chép ảnh:', err);
+      // Fallback: Hướng dẫn người dùng click chuột phải vào ảnh
+      setDirectCopyError(true);
+      setDirectCopySuccess(false);
+      setDirectCopyMsg('Trình duyệt hạn chế ghi trực tiếp. Bạn hãy click chuột phải vào ảnh bên dưới chọn "Sao chép hình ảnh" (Copy image) để dán Zalo!');
     }
   };
 
@@ -262,12 +325,12 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
               disabled={isCopyingImage}
               onClick={handleCopyInvoiceImage}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/25 transition cursor-pointer disabled:opacity-50"
-              title="Sao chép ảnh hóa đơn trực tiếp vào bộ nhớ tạm máy tính/điện thoại để dán gửi Zalo (Không tải tệp về máy)"
+              title="Vẽ ảnh hóa đơn và mở xem trước để sao chép trực tiếp vào bộ nhớ tạm gửi Zalo"
             >
               {isCopyingImage ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Đang sao chép...</span>
+                  <span>Đang vẽ ảnh...</span>
                 </>
               ) : (
                 <>
@@ -382,80 +445,153 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
           </div>
         )}
 
-        {/* Fallback modal khi trình duyệt không cho phép ghi thẳng vào clipboard */}
-        {fallbackModal.isOpen && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
-              <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
-                    <Image className="w-4 h-4" />
+        {/* MODAL TRỰC QUAN: XEM TRƯỚC ẢNH HÓA ĐƠN & SAO CHÉP ĐỒNG BỘ VÀO BỘ NHỚ TẠM */}
+        {copyPreviewModal.isOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+              {/* Header Modal */}
+              <div className="p-3.5 sm:p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                    <Image className="w-5 h-5" />
                   </span>
                   <div>
-                    <h4 className="font-extrabold text-sm">Ảnh Hóa Đơn Cho Khách (Gửi Zalo)</h4>
-                    <p className="text-[11px] text-slate-400">Sao chép hình ảnh hoặc tải về máy</p>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-extrabold text-sm sm:text-base">Xem Trước & Sao Chép Ảnh Hóa Đơn (Gửi Zalo)</h4>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500 text-slate-950">
+                        {order.orderNumber}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Khách hàng: <strong className="text-slate-200">{order.customerName}</strong>
+                      {cleanCustomerPhone && <span className="ml-2 font-mono text-slate-300">({cleanCustomerPhone})</span>}
+                    </p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    if (fallbackModal.imageUrl) URL.revokeObjectURL(fallbackModal.imageUrl);
-                    setFallbackModal({ isOpen: false, imageUrl: '' });
+                    setCopyPreviewModal({ isOpen: false, imageUrl: '', blob: null });
                   }}
-                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-4 bg-amber-50 border-b border-amber-200 text-xs text-amber-950 flex items-start gap-2">
-                <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <strong>Hướng dẫn sao chép:</strong> Hãy <strong>chuột phải vào ảnh dưới đây</strong> (hoặc nhấn giữ trên điện thoại) và chọn <strong>"Sao chép hình ảnh" (Copy image)</strong>, sau đó mở Zalo và ấn <strong>Ctrl + V</strong> để dán gửi khách!
-                </div>
-              </div>
-
-              <div className="p-4 flex-1 overflow-y-auto bg-slate-100 flex items-center justify-center">
-                <img
-                  src={fallbackModal.imageUrl}
-                  alt="Hóa đơn xem trước"
-                  className="max-h-[55vh] object-contain rounded-lg shadow-md border border-slate-300 bg-white"
-                />
-              </div>
-
-              <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 flex-wrap">
-                <a
-                  href={fallbackModal.imageUrl}
-                  download={`Hoa_don_${order.orderNumber}.png`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Tải ảnh về máy</span>
-                </a>
-
-                <div className="flex items-center gap-2">
+              {/* Thông báo trạng thái sao chép (Alert Banner) */}
+              {directCopySuccess ? (
+                <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-xs sm:text-sm font-bold flex items-center justify-between gap-3 shadow-inner animate-in slide-in-from-top-1">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
+                    <span>{directCopyMsg || 'Đã copy ảnh hóa đơn thành công! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.'}</span>
+                  </div>
                   {cleanCustomerPhone && (
                     <a
                       href={`https://zalo.me/${cleanCustomerPhone}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                      className="px-3 py-1 bg-white text-emerald-950 rounded-lg text-xs font-black shadow-xs hover:bg-emerald-50 flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Mở Zalo dán ngay (Ctrl+V)</span>
+                    </a>
+                  )}
+                </div>
+              ) : directCopyError ? (
+                <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-950 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <strong className="block font-bold mb-0.5">Trình duyệt hạn chế sao chép tự động:</strong>
+                    <span>Hãy <strong>click chuột phải vào ảnh bên dưới</strong> (hoặc nhấn giữ trên điện thoại) và chọn <strong>"Sao chép hình ảnh" (Copy image)</strong>, sau đó mở Zalo và ấn <strong>Ctrl + V</strong> để dán gửi khách!</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 bg-slate-50 border-b border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Bấm nút xanh dưới đây để sao chép ảnh vào bộ nhớ tạm, sau đó mở Zalo ấn <strong>Ctrl + V</strong> để gửi khách trực tiếp mà không tốn bộ nhớ máy.
+                  </span>
+                </div>
+              )}
+
+              {/* KHUNG NÚT BẤM CHÍNH - GẮN TRỰC TIẾP ONCLICK CỦA NGƯỜI DÙNG */}
+              <div className="p-3 bg-slate-100 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5">
+                {/* NÚT BẤM TO RÕ THEO YÊU CẦU: 📋 SAO CHÉP ẢNH VÀO BỘ NHỚ TẠM */}
+                <button
+                  type="button"
+                  id="btn-direct-copy-invoice-image"
+                  onClick={handleDirectClipboardCopy}
+                  className={`flex items-center justify-center gap-2 px-5 py-2.5 sm:py-3 rounded-xl text-white font-black text-xs sm:text-sm shadow-md transition transform active:scale-98 cursor-pointer flex-1 sm:flex-initial ${
+                    directCopySuccess
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-700 ring-2 ring-emerald-300'
+                      : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-700/30'
+                  }`}
+                  title="Click trực tiếp để sao chép ảnh hóa đơn vào Clipboard máy tính/điện thoại"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>
+                    {directCopySuccess
+                      ? '✅ ĐÃ COPY THÀNH CÔNG! (MỞ ZALO DÁN CTRL+V)'
+                      : '📋 SAO CHÉP ẢNH VÀO BỘ NHỚ TẠM'}
+                  </span>
+                </button>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Nút Mở Zalo khách */}
+                  {cleanCustomerPhone && (
+                    <a
+                      href={`https://zalo.me/${cleanCustomerPhone}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 sm:py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
+                      title={`Mở Zalo số ${cleanCustomerPhone}`}
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>Mở Zalo khách</span>
                     </a>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (fallbackModal.imageUrl) URL.revokeObjectURL(fallbackModal.imageUrl);
-                      setFallbackModal({ isOpen: false, imageUrl: '' });
-                    }}
-                    className="px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-semibold cursor-pointer"
+
+                  {/* Nút Tải ảnh về máy (Dự phòng) */}
+                  <a
+                    href={copyPreviewModal.imageUrl}
+                    download={`Hoa_don_${order.orderNumber}.png`}
+                    className="flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+                    title="Tải ảnh hóa đơn về máy"
                   >
-                    Đóng
-                  </button>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Tải ảnh PNG</span>
+                  </a>
                 </div>
+              </div>
+
+              {/* Vùng hiển thị trực quan bức ảnh hóa đơn */}
+              <div className="p-4 flex-1 overflow-y-auto bg-slate-200/80 flex items-center justify-center">
+                <div className="max-w-full text-center">
+                  <img
+                    id="invoice-rendered-preview-img"
+                    src={copyPreviewModal.imageUrl}
+                    alt="Hóa đơn xem trước"
+                    className="max-h-[56vh] max-w-full object-contain rounded-lg shadow-xl border border-slate-300 bg-white inline-block"
+                  />
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    💡 Chuột phải vào ảnh để chọn <strong>"Sao chép hình ảnh"</strong> bất cứ lúc nào
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer Modal */}
+              <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+                <span>Khổ in hiện tại: <strong>{paperSize === 'a4' ? 'A4' : paperSize === 'a5-portrait' ? 'A5 Dọc' : 'A5 Ngang'}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCopyPreviewModal({ isOpen: false, imageUrl: '', blob: null });
+                  }}
+                  className="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold cursor-pointer transition"
+                >
+                  Đóng cửa sổ
+                </button>
               </div>
             </div>
           </div>
