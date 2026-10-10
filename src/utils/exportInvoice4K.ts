@@ -306,13 +306,23 @@ export async function generateInvoicePortraitCanvas(order: Order, workshop: Work
     ctx.fillStyle = '#0f172a';
     ctx.fillText(item.productCode, colX[2] + 15, textMidY);
 
-    // Tên SP
-    ctx.font = `600 27px ${FONT_SANS}`;
-    ctx.fillStyle = '#1e293b';
+    // Tên SP: Dòng 1 Tên SP (In đậm)
+    ctx.font = `700 26px ${FONT_SANS}`;
+    ctx.fillStyle = '#0f172a';
     let displayTitle = item.productName;
-    if (item.note) displayTitle += ` (${item.note})`;
-    if (displayTitle.length > 36) displayTitle = displayTitle.substring(0, 34) + '...';
-    ctx.fillText(displayTitle, colX[3] + 15, textMidY);
+    if (displayTitle.length > 34) displayTitle = displayTitle.substring(0, 32) + '...';
+    ctx.fillText(displayTitle, colX[3] + 15, textMidY - 14);
+
+    // Dòng 2: Mã SP & Cốt vật tư (phân tách trực quan phía dưới)
+    ctx.font = `500 20px ${FONT_SANS}`;
+    ctx.fillStyle = '#64748b';
+    const subParts: string[] = [];
+    if (item.productCode) subParts.push(`Mã: ${item.productCode}`);
+    if (item.materialCoreCode) subParts.push(`Cốt: ${item.materialCoreCode}`);
+    if (item.note) subParts.push(`Ghi chú: ${item.note}`);
+    let subText = subParts.join('  •  ');
+    if (subText.length > 44) subText = subText.substring(0, 42) + '...';
+    ctx.fillText(subText, colX[3] + 15, textMidY + 18);
 
     // Khổ
     ctx.textAlign = 'center';

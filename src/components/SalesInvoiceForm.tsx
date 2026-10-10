@@ -5,7 +5,8 @@ import { calculateOrderBOM, calculateItemBOM, createMaterialDeductionRecords, ex
 import {
   Plus, Trash2, Search, Check, Save, Printer, RefreshCw, UserPlus,
   ArrowRight, Sparkles, AlertCircle, Calendar, Hash, FileText, ChevronDown, CheckCircle2, Boxes, Layers,
-  Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X, ShoppingBag, Building2
+  Star, Zap, SlidersHorizontal, Tag, Bookmark, Settings, RotateCcw, CheckSquare, Square, X, ShoppingBag, Building2,
+  ExternalLink
 } from 'lucide-react';
 import { MoneyInput } from './MoneyInput';
 import { StudioComboModal } from './StudioComboModal';
@@ -1124,15 +1125,29 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
 
             {/* Phone */}
             <div className="md:col-span-3">
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Số điện thoại
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700">
+                  Số điện thoại
+                </label>
+                {customerPhone.trim() && (
+                  <a
+                    href={`https://zalo.me/${customerPhone.replace(/[^0-9]/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold transition shadow-2xs cursor-pointer"
+                    title={`Mở Zalo khách hàng (${customerPhone.replace(/[^0-9]/g, '')})`}
+                  >
+                    <ExternalLink className="w-3 h-3 text-blue-600" />
+                    <span>Mở Zalo khách</span>
+                  </a>
+                )}
+              </div>
               <input
                 type="text"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
                 placeholder="0988 123 456"
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs font-mono"
               />
             </div>
 
@@ -1321,7 +1336,20 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
-              {items.map((row, idx) => (
+              {items.map((row, idx) => {
+                const rowBOM = calculateItemBOM(row, materials, products);
+                const codeUpper = (row.productCode || '').toUpperCase().trim();
+                const coreUpper = (row.materialCoreCode || '').toUpperCase().trim();
+                const isNoCore =
+                  coreUpper === 'NONE' ||
+                  coreUpper === 'KHONG' ||
+                  coreUpper === 'KHONG_COT' ||
+                  coreUpper === '0';
+                const isFomex =
+                  coreUpper.includes('FOMEX') ||
+                  (row.materialCoreName && row.materialCoreName.toLowerCase().includes('fomex'));
+
+                return (
                 <tr key={row.id} className="hover:bg-amber-50/20 group transition-colors">
                   {/* STT */}
                   <td className="py-2 px-2.5 text-center text-slate-400 font-mono font-medium">
@@ -1399,57 +1427,50 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                     )}
                   </td>
 
-                  {/* 3. CỘT TÊN HÀNG */}
-                  <td className="py-2 px-2">
+                  {/* 3. CỘT TÊN HÀNG: In đậm, tách dòng rõ ràng với Mã SP & Cốt vật tư bên dưới */}
+                  <td className="py-2 px-2 min-w-[220px]">
                     <input
                       type="text"
                       value={row.productName}
                       onChange={(e) => handleRowChange(idx, 'productName', e.target.value)}
                       placeholder="Tên sản phẩm in ảnh..."
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden"
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs sm:text-[13px] font-bold text-slate-900 break-words focus:ring-1 focus:ring-amber-500 focus:border-amber-500 outline-hidden transition shadow-2xs"
                     />
-                    {(() => {
-                      const rowBOM = calculateItemBOM(row, materials, products);
-                      if (rowBOM.length === 0) {
-                        const code = (row.productCode || '').toLowerCase().trim();
-                        const name = (row.productName || '').toLowerCase().trim();
-                        const isNoCore =
-                          code.startsWith('inep') ||
-                          code.startsWith('inst') ||
-                          code.startsWith('infl') ||
-                          code.startsWith('inkl') ||
-                          name.startsWith('in ảnh') ||
-                          name.startsWith('in ép') ||
-                          (code.startsWith('in') && !code.startsWith('hd') && !code.startsWith('mk') && !code.startsWith('lv'));
-                        if (isNoCore && (row.productCode || row.productName)) {
-                          return (
-                            <div className="mt-1 flex items-center gap-1">
-                              <span className="text-[9px] text-slate-400 italic">
-                                — Không dùng cốt ván (bỏ trống)
-                              </span>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }
-                      return (
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-900 bg-amber-100/90 border border-amber-300/80 px-1 py-0.2 rounded-sm shrink-0">
-                            <Boxes className="w-2.5 h-2.5 text-amber-700" />
-                            <span>Vật tư:</span>
+
+                    {/* Dòng phân tách riêng phía dưới cho Mã sản phẩm & Cốt vật tư */}
+                    {(codeUpper || coreUpper || rowBOM.length > 0) && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                        {/* Tag Mã SP */}
+                        {codeUpper && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[10px] text-gray-500 bg-gray-100 border border-gray-200 font-semibold">
+                            <span>Mã:</span>
+                            <strong className="text-gray-700">{codeUpper}</strong>
                           </span>
-                          {rowBOM.map((b, bIdx) => (
-                            <span
-                              key={bIdx}
-                              className="inline-flex items-center gap-0.5 text-[9px] text-slate-700 bg-slate-100 border border-slate-200 px-1 py-0.2 rounded-sm"
-                              title={b.reason}
-                            >
-                              <strong>{b.quantity}</strong> {b.material.unit} {b.material.name}
-                            </span>
-                          ))}
-                        </div>
-                      );
-                    })()}
+                        )}
+
+                        {/* Tag Cốt vật tư */}
+                        {coreUpper && (
+                          <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold border ${
+                            isNoCore
+                              ? 'bg-gray-50 text-gray-500 border-gray-200'
+                              : isFomex
+                              ? 'bg-sky-50 text-sky-800 border-sky-200'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}>
+                            <span>{isNoCore ? '🚫' : (isFomex ? '✨' : '🪵')}</span>
+                            <span>{isNoCore ? 'Không cốt' : `Cốt: ${coreUpper}`}</span>
+                          </span>
+                        )}
+
+                        {/* Danh mục vật tư trừ kho nếu có */}
+                        {rowBOM.length > 0 && (
+                          <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                            <Boxes className="w-2.5 h-2.5 text-amber-600" />
+                            <span>Trừ kho: {rowBOM.map(b => `${b.quantity} ${b.material.unit} ${b.material.name}`).join(', ')}</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
 
                   {/* 4. CỘT KÍCH THƯỚC */}
@@ -1603,7 +1624,8 @@ export const SalesInvoiceForm: React.FC<SalesInvoiceFormProps> = ({
                     </button>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>

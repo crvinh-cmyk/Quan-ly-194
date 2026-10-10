@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Order, WorkshopInfo } from '../types';
 import { formatCurrency, formatDateVN, numberToVietnameseWords } from '../utils/formatters';
 import {
-  Printer, X, Download, Share2, Check, Phone, MapPin,
+  Printer, X, Download, Copy, Phone, MapPin,
   Building2, Image, FileText, CheckCircle2, Loader2, Sparkles, ExternalLink
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import { generateInvoicePortraitCanvas, downloadCanvasAsJPG } from '../utils/exportInvoice4K';
 
 export type PaperSize = 'a4' | 'a5-portrait' | 'a5-landscape';
@@ -16,12 +17,17 @@ interface PrintInvoiceModalProps {
 }
 
 export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, workshop, onClose }) => {
-  const [copied, setCopied] = useState(false);
   const [paperSize, setPaperSize] = useState<PaperSize>('a4');
   const [isExportingJPG, setIsExportingJPG] = useState(false);
+  const [isCopyingImage, setIsCopyingImage] = useState(false);
+  const [copyToast, setCopyToast] = useState('');
   const [exportSuccessMsg, setExportSuccessMsg] = useState('');
   const [exportedJpgUrl, setExportedJpgUrl] = useState<string>('');
   const [exportedFilename, setExportedFilename] = useState<string>('');
+  const [fallbackModal, setFallbackModal] = useState<{ isOpen: boolean; imageUrl: string }>({
+    isOpen: false,
+    imageUrl: ''
+  });
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   // Dynamically update print @page style based on chosen paper size
@@ -67,42 +73,75 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
 
   if (!order) return null;
 
+  const cleanCustomerPhone = (order.customerPhone || '').replace(/[^0-9]/g, '');
+
   // Print Handler
   const handlePrint = () => {
     window.print();
   };
 
-  // Copy Zalo Text
-  const handleCopyZalo = () => {
-    let text = `📸 *${workshop.name} - PHIẾU BÁN HÀNG & GIAO ẢNH*\n`;
-    text += `Mã đơn: ${order.orderNumber} | Ngày: ${formatDateVN(order.date)}\n`;
-    text += `Khách hàng: ${order.customerName} - ĐT: ${order.customerPhone || '---'}\n`;
-    text += `------------------------------------\n`;
-    order.items.forEach((item, idx) => {
-      text += `${idx + 1}. [${item.productCode}] ${item.productName} (${item.size})\n`;
-      text += `   SL: ${item.quantity} x ${formatCurrency(item.price)} = ${formatCurrency(item.amount)}\n`;
-      if (item.note) text += `   (Ghi chú: ${item.note})\n`;
-    });
-    text += `------------------------------------\n`;
-    text += `👉 Tiền hàng: ${formatCurrency(order.subtotal)}\n`;
-    if (order.discount > 0) {
-      text += `👉 Chiết khấu: -${formatCurrency(order.discount)}\n`;
-    }
-    if (order.previousDebt > 0) {
-      text += `👉 Nợ cũ: +${formatCurrency(order.previousDebt)}\n`;
-    }
-    if (order.paid > 0) {
-      text += `👉 Đã thanh toán / Tạm ứng: -${formatCurrency(order.paid)}\n`;
-    }
-    text += `💰 *CẦN THANH TOÁN: ${formatCurrency(order.totalDue)}*\n`;
-    text += `(Bằng chữ: ${numberToVietnameseWords(order.totalDue)})\n`;
-    text += `------------------------------------\n`;
-    text += `🏦 STK Techcombank: ${workshop.bankAccount.accountNumber} - ${workshop.bankAccount.accountHolder}\n`;
-    text += `Hotline: ${workshop.phone} - Cảm ơn quý khách!`;
+  // Copy invoice image to clipboard using html2canvas & Web Clipboard API (No file download, no disk waste)
+  const handleCopyInvoiceImage = async () => {
+    if (!invoiceRef.current) return;
+    setIsCopyingImage(true);
+    setCopyToast('');
 
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    try {
+      if (typeof document !== 'undefined' && document.fonts) {
+        try {
+          await document.fonts.ready;
+        } catch {
+          // ignore font loading
+        }
+      }
+
+      // Convert invoiceRef element to high-res canvas (scale: 2 for crisp retina/smartphone rendering)
+      const canvas = await html2canvas(invoiceRef.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      });
+
+      // Convert canvas to PNG blob
+      const blob: Blob | null = await new Promise((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/png', 0.95);
+      });
+
+      if (!blob) {
+        throw new Error('Không thể tạo file ảnh từ hóa đơn');
+      }
+
+      // Attempt to copy image directly to system clipboard
+      let copiedSuccess = false;
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof ClipboardItem !== 'undefined'
+      ) {
+        try {
+          const item = new ClipboardItem({ 'image/png': blob });
+          await navigator.clipboard.write([item]);
+          copiedSuccess = true;
+          setCopyToast('Đã copy ảnh hóa đơn! Hãy mở Zalo và ấn Ctrl + V để dán gửi khách.');
+          setTimeout(() => setCopyToast(''), 7000);
+        } catch (clipErr) {
+          console.warn('Direct ClipboardItem write failed, using fallback preview:', clipErr);
+        }
+      }
+
+      // Fallback if browser blocked clipboard writing or doesn't support ClipboardItem
+      if (!copiedSuccess) {
+        const url = URL.createObjectURL(blob);
+        setFallbackModal({ isOpen: true, imageUrl: url });
+      }
+    } catch (err: any) {
+      console.error('Lỗi khi chụp ảnh hóa đơn:', err);
+      setExportSuccessMsg(`⚠️ Không thể chụp ảnh tự động: ${err?.message || 'Vui lòng bấm Xuất Phiếu Hóa Đơn'}`);
+    } finally {
+      setIsCopyingImage(false);
+    }
   };
 
   // Export Portrait JPG for easy mobile viewing
@@ -203,34 +242,58 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
 
           {/* Right Action Buttons */}
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap justify-end">
-            {/* Copy Zalo Text */}
+            {/* Mở Zalo khách (nếu có số điện thoại) */}
+            {cleanCustomerPhone && (
+              <a
+                href={`https://zalo.me/${cleanCustomerPhone}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition cursor-pointer"
+                title={`Mở Zalo số ${cleanCustomerPhone} để gửi ảnh`}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Mở Zalo khách</span>
+              </a>
+            )}
+
+            {/* Nút Sao chép ảnh hóa đơn (Gửi Zalo) */}
             <button
               type="button"
-              onClick={handleCopyZalo}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 transition cursor-pointer"
-              title="Sao chép tóm tắt gửi tin nhắn Zalo"
+              disabled={isCopyingImage}
+              onClick={handleCopyInvoiceImage}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/25 transition cursor-pointer disabled:opacity-50"
+              title="Sao chép ảnh hóa đơn trực tiếp vào bộ nhớ tạm máy tính/điện thoại để dán gửi Zalo (Không tải tệp về máy)"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
-              <span>{copied ? 'Đã copy!' : 'Copy Zalo'}</span>
+              {isCopyingImage ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Đang sao chép...</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Sao chép ảnh hóa đơn (Gửi Zalo)</span>
+                </>
+              )}
             </button>
 
-            {/* Export Invoice Button */}
+            {/* Xuất phiếu tải về máy (JPG) */}
             <button
               type="button"
               disabled={isExportingJPG}
               onClick={handleExportJPGPortrait}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-extrabold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-md shadow-blue-500/20 transition cursor-pointer disabled:opacity-50"
-              title="Xuất phiếu hóa đơn gửi Zalo cho khách hàng"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer disabled:opacity-50"
+              title="Tải ảnh hóa đơn về máy"
             >
               {isExportingJPG ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Đang xuất phiếu...</span>
+                  <span>Đang tải...</span>
                 </>
               ) : (
                 <>
-                  <Image className="w-3.5 h-3.5 text-blue-200" />
-                  <span>Xuất Phiếu Hóa Đơn</span>
+                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Tải ảnh</span>
                 </>
               )}
             </button>
@@ -239,7 +302,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
             <button
               type="button"
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-extrabold rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
               title={`In phiếu khổ ${paperSize === 'a4' ? 'A4' : 'A5'}`}
             >
               <Printer className="w-3.5 h-3.5" />
@@ -256,6 +319,36 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
             </button>
           </div>
         </div>
+
+        {/* Toast thông báo đã sao chép ảnh hóa đơn thành công */}
+        {copyToast && (
+          <div className="no-print bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white px-4 py-2.5 text-xs sm:text-sm font-extrabold flex items-center justify-between gap-3 shadow-lg animate-in fade-in slide-in-from-top-2 border-b border-emerald-400">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
+              <span>{copyToast}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {cleanCustomerPhone && (
+                <a
+                  href={`https://zalo.me/${cleanCustomerPhone}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 bg-white text-emerald-950 rounded-lg text-xs font-black shadow-xs hover:bg-emerald-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Mở Zalo dán ngay (Ctrl+V)</span>
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setCopyToast('')}
+                className="text-emerald-100 hover:text-white p-1 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Success Export Notification & Direct Download Button */}
         {exportSuccessMsg && (
@@ -285,6 +378,85 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
               >
                 ✕
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Fallback modal khi trình duyệt không cho phép ghi thẳng vào clipboard */}
+        {fallbackModal.isOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+              <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
+                    <Image className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h4 className="font-extrabold text-sm">Ảnh Hóa Đơn Cho Khách (Gửi Zalo)</h4>
+                    <p className="text-[11px] text-slate-400">Sao chép hình ảnh hoặc tải về máy</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (fallbackModal.imageUrl) URL.revokeObjectURL(fallbackModal.imageUrl);
+                    setFallbackModal({ isOpen: false, imageUrl: '' });
+                  }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 bg-amber-50 border-b border-amber-200 text-xs text-amber-950 flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong>Hướng dẫn sao chép:</strong> Hãy <strong>chuột phải vào ảnh dưới đây</strong> (hoặc nhấn giữ trên điện thoại) và chọn <strong>"Sao chép hình ảnh" (Copy image)</strong>, sau đó mở Zalo và ấn <strong>Ctrl + V</strong> để dán gửi khách!
+                </div>
+              </div>
+
+              <div className="p-4 flex-1 overflow-y-auto bg-slate-100 flex items-center justify-center">
+                <img
+                  src={fallbackModal.imageUrl}
+                  alt="Hóa đơn xem trước"
+                  className="max-h-[55vh] object-contain rounded-lg shadow-md border border-slate-300 bg-white"
+                />
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+                <a
+                  href={fallbackModal.imageUrl}
+                  download={`Hoa_don_${order.orderNumber}.png`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Tải ảnh về máy</span>
+                </a>
+
+                <div className="flex items-center gap-2">
+                  {cleanCustomerPhone && (
+                    <a
+                      href={`https://zalo.me/${cleanCustomerPhone}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Mở Zalo khách</span>
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (fallbackModal.imageUrl) URL.revokeObjectURL(fallbackModal.imageUrl);
+                      setFallbackModal({ isOpen: false, imageUrl: '' });
+                    }}
+                    className="px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -351,11 +523,25 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
             <div className={`bg-slate-50 ${isA5 ? 'p-2.5 mb-3 gap-1.5 text-xs' : 'p-3.5 mb-4 gap-2 text-xs'} rounded-lg border border-slate-200 grid grid-cols-1 sm:grid-cols-2`}>
               <div>
                 <p className="text-slate-500 text-[11px]">Khách hàng / Studio đối tác:</p>
-                <p className="font-bold text-slate-950">{order.customerName}</p>
+                <p className="font-bold text-slate-950 text-xs sm:text-sm">{order.customerName}</p>
               </div>
               <div>
                 <p className="text-slate-500 text-[11px]">Số điện thoại liên hệ:</p>
-                <p className="font-bold text-slate-950">{order.customerPhone || 'Chưa cập nhật'}</p>
+                <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                  <p className="font-bold text-slate-950 font-mono text-xs sm:text-sm">{order.customerPhone || 'Chưa cập nhật'}</p>
+                  {cleanCustomerPhone && (
+                    <a
+                      href={`https://zalo.me/${cleanCustomerPhone}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="no-print inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold transition shadow-2xs cursor-pointer"
+                      title={`Mở Zalo khách hàng (${cleanCustomerPhone})`}
+                    >
+                      <ExternalLink className="w-3 h-3 text-blue-600" />
+                      <span>Mở Zalo khách</span>
+                    </a>
+                  )}
+                </div>
               </div>
               {order.customerAddress && (
                 <div className="sm:col-span-2">
@@ -378,7 +564,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                   <tr className="bg-slate-100 text-slate-900 font-bold border-b border-slate-300">
                     <th className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center w-8`}>STT</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-20`}>Ngày</th>
-                    <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} w-20`}>Mã hàng</th>
+                    <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-24`}>Mã hàng</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'}`}>Tên hàng & Quy cách ảnh</th>
                     <th className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center w-20`}>Khổ</th>
                     <th className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center w-12`}>SL</th>
@@ -387,37 +573,87 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({ order, wor
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {order.items.map((item, idx) => (
-                    <tr key={item.id || idx} className="hover:bg-slate-50/50">
-                      <td className={`${isA5 ? 'py-1 px-1.5' : 'py-1.5 px-2'} text-center text-slate-500 font-mono`}>{idx + 1}</td>
-                      <td className={`${isA5 ? 'py-1 px-2 text-[10px]' : 'py-1.5 px-2.5 text-[11px]'} text-center font-mono text-slate-600`}>
-                        {formatDateVN(item.date || order.date)}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-2' : 'py-1.5 px-2.5'} font-mono font-bold text-slate-950 bg-slate-50/80`}>
-                        {item.productCode}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-2' : 'py-1.5 px-3'} font-medium text-slate-800`}>
-                        <div>{item.productName}</div>
-                        {item.note && (
-                          <div className="text-[10px] text-slate-500 italic mt-0.5">
-                            ↳ {item.note}
+                  {order.items.map((item, idx) => {
+                    const codeUpper = (item.materialCoreCode || '').toUpperCase().trim();
+                    const isFomex = codeUpper.includes('FOMEX') || (item.materialCoreName && item.materialCoreName.toLowerCase().includes('fomex'));
+                    const isNoCore = codeUpper === 'NONE' || codeUpper === 'KHONG' || codeUpper === 'KHONG_COT' || codeUpper === '0';
+
+                    return (
+                      <tr key={item.id || idx} className="hover:bg-slate-50/50">
+                        {/* STT */}
+                        <td className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center text-slate-500 font-mono`}>{idx + 1}</td>
+
+                        {/* Ngày */}
+                        <td className={`${isA5 ? 'py-1.5 px-2 text-[10px]' : 'py-2 px-2.5 text-[11px]'} text-center font-mono text-slate-600`}>
+                          {formatDateVN(item.date || order.date)}
+                        </td>
+
+                        {/* Mã hàng */}
+                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} font-mono font-bold text-slate-900 bg-slate-50/70 text-center break-words`}>
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-900 font-mono text-[11px] font-bold">
+                            {item.productCode}
+                          </span>
+                        </td>
+
+                        {/* Tên hàng & Quy cách ảnh: Tách dòng rõ ràng giữa tên và mã/cốt */}
+                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'} text-slate-900`}>
+                          {/* Tên sản phẩm: In đậm, cỡ chữ dễ đọc, ngắt dòng tự nhiên */}
+                          <div className={`font-bold text-slate-950 ${isA5 ? 'text-xs' : 'text-[13px]'} break-words leading-snug`}>
+                            {item.productName}
                           </div>
-                        )}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-2' : 'py-1.5 px-2.5'} text-center font-bold text-slate-700 bg-slate-50/50`}>
-                        {item.size}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-1.5' : 'py-1.5 px-2'} text-center font-black text-slate-900`}>
-                        {item.quantity}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-2' : 'py-1.5 px-2.5'} text-right font-mono text-slate-700`}>
-                        {formatCurrency(item.price)}
-                      </td>
-                      <td className={`${isA5 ? 'py-1 px-2' : 'py-1.5 px-3'} text-right font-mono font-bold text-slate-950`}>
-                        {formatCurrency(item.amount)}
-                      </td>
-                    </tr>
-                  ))}
+
+                          {/* Dòng riêng bên dưới: Mã sản phẩm & Cốt vật tư & Ghi chú */}
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {item.productCode && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono text-[10px] text-gray-500 bg-gray-100 border border-gray-200 font-semibold">
+                                <span>Mã:</span>
+                                <strong className="text-gray-700">{item.productCode}</strong>
+                              </span>
+                            )}
+
+                            {codeUpper && (
+                              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold border ${
+                                isNoCore
+                                  ? 'bg-gray-50 text-gray-500 border-gray-200'
+                                  : isFomex
+                                  ? 'bg-sky-50 text-sky-800 border-sky-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                              }`}>
+                                <span>{isNoCore ? '🚫' : (isFomex ? '✨' : '🪵')}</span>
+                                <span>{isNoCore ? 'Không cốt' : `Cốt: ${codeUpper}`}</span>
+                              </span>
+                            )}
+
+                            {item.note && (
+                              <span className="text-[10px] text-gray-500 italic">
+                                ↳ Ghi chú: {item.note}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Khổ */}
+                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-center font-bold text-slate-700 bg-slate-50/50`}>
+                          {item.size}
+                        </td>
+
+                        {/* SL */}
+                        <td className={`${isA5 ? 'py-1.5 px-1.5' : 'py-2 px-2'} text-center font-black text-slate-950 text-sm`}>
+                          {item.quantity}
+                        </td>
+
+                        {/* Đơn giá */}
+                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-2.5'} text-right font-mono text-slate-700`}>
+                          {formatCurrency(item.price)}
+                        </td>
+
+                        {/* Thành tiền */}
+                        <td className={`${isA5 ? 'py-1.5 px-2' : 'py-2 px-3'} text-right font-mono font-black text-slate-950 text-sm`}>
+                          {formatCurrency(item.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
