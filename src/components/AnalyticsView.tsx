@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, StockImportReceipt, Customer } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { isPartnerMode, getDisplayPrice } from '../utils/partnerConfig';
 import {
   Calendar, DollarSign, Award, BarChart3, RotateCcw,
   Sparkles, CheckCircle2, Flame, ArrowDown, TrendingUp, Coins,
@@ -57,6 +58,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
   // Xử lý thay đổi số tiền khấu trừ doanh thu cho một tháng cụ thể
   const handleDeductionChange = (month: number, rawVal: number) => {
+    if (isPartnerMode()) return; // Chế độ đối tác chỉ xem, không thay đổi dữ liệu gốc
     const key = `${selectedYear}-${month}`;
     const cleanVal = Math.max(0, rawVal);
     const nextMap = {
@@ -129,7 +131,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     const months = Array.from({ length: 12 }, (_, i) => {
       const mNum = i + 1;
       const deductionKey = `${selectedYear}-${mNum}`;
-      const deduction = revenueDeductions[deductionKey] || 0;
+      const rawDeduction = revenueDeductions[deductionKey] || 0;
+      const deduction = isPartnerMode() ? getDisplayPrice(rawDeduction) : rawDeduction;
       return {
         month: mNum,
         name: `Th ${mNum}`,
@@ -652,14 +655,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                           <input
                             type="text"
                             inputMode="numeric"
+                            disabled={isPartnerMode()}
                             value={m.deduction > 0 ? m.deduction.toLocaleString('en-US') : ''}
                             onChange={(e) => {
                               const val = Number(e.target.value.replace(/\D/g, '')) || 0;
                               handleDeductionChange(m.month, val);
                             }}
                             placeholder="0"
-                            title="Khấu trừ doanh thu: nợ khó đòi, trừ sau giảm giá, lý do không thu được..."
-                            className="w-28 px-2 py-1 bg-white hover:bg-rose-50/20 focus:bg-white border border-slate-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-lg text-right font-mono text-xs font-black text-rose-700 outline-none transition shadow-2xs"
+                            title={isPartnerMode() ? 'Chế độ đối tác (chỉ xem, khấu trừ tự động đồng bộ từ hệ thống)' : 'Khấu trừ doanh thu: nợ khó đòi, trừ sau giảm giá, lý do không thu được...'}
+                            className={`w-28 px-2 py-1 bg-white border border-slate-300 rounded-lg text-right font-mono text-xs font-black text-rose-700 outline-none transition shadow-2xs ${
+                              isPartnerMode() ? 'opacity-80 cursor-not-allowed bg-slate-50' : 'hover:bg-rose-50/20 focus:bg-white focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                            }`}
                           />
                           <span className="text-[11px] text-slate-400 font-mono">₫</span>
                         </div>

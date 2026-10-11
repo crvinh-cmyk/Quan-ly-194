@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { WorkshopInfo } from '../types';
 import {
   ShoppingCart, FileText, BarChart3, Tag, Users, Settings, Database, Boxes,
-  Cloud, CloudCheck, RefreshCw, LogOut, UserCircle2, User
+  Cloud, CloudCheck, RefreshCw, LogOut, UserCircle2, User, Sparkles
 } from 'lucide-react';
+import { isPartnerMode, getRevenueMultiplier } from '../utils/partnerConfig';
 
 export type ActiveTab = 'pos' | 'orders' | 'inventory' | 'analytics' | 'products' | 'customers';
 
@@ -34,6 +35,10 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  const isPartner = isPartnerMode();
+  const mult = getRevenueMultiplier();
+  const discountPercent = Math.round((1 - mult) * 100);
+
   const handleConfirmLogout = () => {
     setShowLogoutConfirm(false);
     if (onLogout) onLogout();
@@ -60,9 +65,17 @@ export const Header: React.FC<HeaderProps> = ({
                     <Cloud className="w-3 h-3 text-emerald-400 animate-pulse" />
                     Cloud Firestore
                   </span>
+                  {isPartner && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 shadow-xs border border-amber-300">
+                      <Sparkles className="w-3 h-3 text-slate-950" />
+                      CỔNG ĐỐI TÁC {discountPercent > 0 ? `(-${discountPercent}%)` : ''}
+                    </span>
+                  )}
                 </div>
                 <p className="hidden md:block text-[11px] text-slate-400 font-medium">
-                  Hệ thống quản lý bán hàng & in ảnh đồng bộ trực tuyến
+                  {isPartner
+                    ? `Giao diện rút gọn Đối tác / CTV (Tự động chiết khấu ${discountPercent > 0 ? `${discountPercent}%` : ''} giá bán & doanh thu)`
+                    : 'Hệ thống quản lý bán hàng & in ảnh đồng bộ trực tuyến'}
                 </p>
               </div>
             </div>
@@ -83,23 +96,25 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Bán Hàng</span>
             </button>
 
-            {/* Tab 2: Danh Sách Đơn */}
-            <button
-              onClick={() => setActiveTab('orders')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
-                activeTab === 'orders'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span>Đơn Hàng</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                activeTab === 'orders' ? 'bg-slate-950 text-amber-400' : 'bg-slate-800 text-slate-300'
-              }`}>
-                {ordersCount}
-              </span>
-            </button>
+            {/* Tab 2: Danh Sách Đơn (ẨN HOÀN TOÀN Ở BẢN ĐỐI TÁC) */}
+            {!isPartnerMode() && (
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  activeTab === 'orders'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>Đơn Hàng</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  activeTab === 'orders' ? 'bg-slate-950 text-amber-400' : 'bg-slate-800 text-slate-300'
+                }`}>
+                  {ordersCount}
+                </span>
+              </button>
+            )}
 
             {/* Tab 3: Kho & Nhập Liệu */}
             <button
@@ -135,7 +150,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Tab 5: Bảng Giá & Mã SP */}
             <button
               onClick={() => setActiveTab('products')}
-              className={`hidden xl:flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              className={`${isPartner ? 'flex' : 'hidden md:flex'} items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
                 activeTab === 'products'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -145,18 +160,20 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Bảng Giá Mã SP</span>
             </button>
 
-            {/* Tab 6: Khách Hàng & Sổ Nợ */}
-            <button
-              onClick={() => setActiveTab('customers')}
-              className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
-                activeTab === 'customers'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Khách & Sổ Nợ</span>
-            </button>
+            {/* Tab 6: Khách Hàng & Sổ Nợ (ẨN HOÀN TOÀN Ở BẢN ĐỐI TÁC) */}
+            {!isPartner && (
+              <button
+                onClick={() => setActiveTab('customers')}
+                className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                  activeTab === 'customers'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                <span>Khách & Sổ Nợ</span>
+              </button>
+            )}
           </nav>
 
           {/* Right Tools: User info + Data Management + Settings + Logout */}
@@ -176,23 +193,28 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            {/* Clear / Seed Data Management Button */}
-            <button
-              onClick={onOpenDataManagement}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
-              title="Đồng bộ đám mây, sao lưu hoặc nạp dữ liệu"
-            >
-              <Database className="w-4 h-4 text-amber-400" />
-              <span className="hidden lg:inline text-[11px]">Đồng Bộ</span>
-            </button>
+            {/* Clear / Seed Data Management Button (Ẩn ở bản đối tác) */}
+            {!isPartner && (
+              <button
+                onClick={onOpenDataManagement}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
+                title="Đồng bộ đám mây, sao lưu hoặc nạp dữ liệu"
+              >
+                <Database className="w-4 h-4 text-amber-400" />
+                <span className="hidden lg:inline text-[11px]">Đồng Bộ</span>
+              </button>
+            )}
 
-            <button
-              onClick={onOpenSettings}
-              className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition cursor-pointer"
-              title="Cài đặt tiệm in & Sao lưu dữ liệu"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
+            {/* Workshop Settings Modal (Ẩn ở bản đối tác) */}
+            {!isPartner && (
+              <button
+                onClick={onOpenSettings}
+                className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition cursor-pointer"
+                title="Cài đặt tiệm in & Sao lưu dữ liệu"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            )}
 
             {/* Logout Button */}
             {onLogout && (

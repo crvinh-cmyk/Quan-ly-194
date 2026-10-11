@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Product, ProductCostItem, ProductCostMap } from '../types';
 import { formatCurrency, formatNumber } from '../utils/formatters';
+import { isPartnerMode } from '../utils/partnerConfig';
 import {
   DollarSign, TrendingUp, Calculator, Save, Printer, Download,
   Search, FileText, Sparkles, CheckCircle2, Layers, PieChart,
@@ -309,6 +310,7 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
 
   // Handle cell input change
   const handleCostChange = (code: string, field: keyof ProductCostItem, rawVal: string) => {
+    if (isPartnerMode()) return; // Chế độ đối tác chỉ xem báo cáo giá thành & lời lãi, không sửa giá vốn gốc
     const val = rawVal === '' ? undefined : Math.max(0, Number(rawVal.replace(/[^0-9]/g, '')) || 0);
 
     setCostMap(prev => {
@@ -339,6 +341,7 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
 
   // Manual explicit save button
   const handleManualSave = async () => {
+    if (isPartnerMode()) return;
     setIsSaving(true);
     try {
       await saveProductCostsToFirestore(costMap);

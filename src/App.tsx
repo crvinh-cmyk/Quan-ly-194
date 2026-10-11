@@ -26,10 +26,14 @@ import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DataManagementModal } from './components/DataManagementModal';
 import { LoginView } from './components/LoginView';
+import { isPartnerMode, transformOrderForPartner, applyPartnerDiscount, getDisplayPrice } from './utils/partnerConfig';
 
 const STORAGE_TAB_KEY = 'xuongin194_active_tab';
 
 const getInitialTab = (): ActiveTab => {
+  if (isPartnerMode()) {
+    return 'pos';
+  }
   try {
     const validTabs: ActiveTab[] = ['pos', 'orders', 'inventory', 'analytics', 'products', 'customers'];
     
@@ -101,6 +105,10 @@ export default function App() {
 
   // Function to switch tab and persist UI tab preference
   const handleSelectTab = (tab: ActiveTab) => {
+    if (isPartnerMode() && (tab === 'orders' || tab === 'customers')) {
+      setActiveTab('pos');
+      return;
+    }
     setActiveTab(tab);
     try {
       localStorage.setItem(STORAGE_TAB_KEY, tab);
@@ -493,6 +501,47 @@ export default function App() {
   };
 
   // 1. Loading splash screen while verifying persistent session
+  // Dữ liệu áp dụng chiết khấu đối tác khi ở chế độ Partner View (nhân 0.8 / giảm 20% doanh thu)
+  const partnerOrders = useMemo(() => {
+    if (!isPartnerMode()) return orders;
+    return orders.map(transformOrderForPartner);
+  }, [orders]);
+
+  const partnerProducts = useMemo(() => {
+    if (!isPartnerMode()) return products;
+    return products.map(p => ({
+      ...p,
+      price: getDisplayPrice(p.price)
+    }));
+  }, [products]);
+
+  const partnerCombos = useMemo(() => {
+    if (!isPartnerMode()) return combos;
+    return combos.map(c => ({
+      ...c,
+      items: Array.isArray(c.items)
+        ? c.items.map(ci => ({
+            ...ci,
+            defaultPrice: ci.defaultPrice !== undefined ? getDisplayPrice(ci.defaultPrice) : undefined
+          }))
+        : c.items
+    }));
+  }, [combos]);
+
+  const partnerCustomers = useMemo(() => {
+    if (!isPartnerMode()) return customers;
+    return customers.map(c => ({
+      ...c,
+      initialDebt: 0,
+      initialYearlyRevenue: getDisplayPrice(c.initialYearlyRevenue || 0),
+      initialYearlyRevenues: c.initialYearlyRevenues
+        ? Object.fromEntries(
+            Object.entries(c.initialYearlyRevenues).map(([k, v]) => [k, getDisplayPrice(v)])
+          )
+        : undefined
+    }));
+  }, [customers]);
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-white select-none">
@@ -557,14 +606,16 @@ export default function App() {
           >
             Bán Hàng
           </button>
-          <button
-            onClick={() => handleSelectTab('orders')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
-              activeTab === 'orders' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
-            }`}
-          >
-            Đơn ({orders.length})
-          </button>
+          {!isPartnerMode() && (
+            <button
+              onClick={() => handleSelectTab('orders')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
+                activeTab === 'orders' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
+              }`}
+            >
+              Đơn ({orders.length})
+            </button>
+          )}
           <button
             onClick={() => handleSelectTab('inventory')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 ${
@@ -594,43 +645,47 @@ export default function App() {
           >
             Bảng Giá SP
           </button>
-          <button
-            onClick={() => handleSelectTab('customers')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
-              activeTab === 'customers' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
-            }`}
-          >
-            Khách & Nợ
-          </button>
-          <button
-            onClick={() => setIsDataManagementOpen(true)}
-            className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 shrink-0"
-          >
-            Cloud Data
-          </button>
+          {!isPartnerMode() && (
+            <button
+              onClick={() => handleSelectTab('customers')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
+                activeTab === 'customers' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-700'
+              }`}
+            >
+              Khách & Nợ
+            </button>
+          )}
+          {!isPartnerMode() && (
+            <button
+              onClick={() => setIsDataManagementOpen(true)}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 shrink-0"
+            >
+              Cloud Data
+            </button>
+          )}
         </div>
 
         {/* Tab 1: Point of Sale / Main Order Creation */}
         {activeTab === 'pos' && (
           <SalesInvoiceForm
-            products={products}
-            customers={customers}
-            allOrders={orders}
+            products={partnerProducts}
+            customers={isPartnerMode() ? [] : customers}
+            allOrders={partnerOrders}
             materials={materials}
-            combos={combos}
-            onSaveCombo={handleSaveCombo}
-            onDeleteCombo={handleDeleteCombo}
+            combos={partnerCombos}
+            onSaveCombo={isPartnerMode() ? () => {} : handleSaveCombo}
+            onDeleteCombo={isPartnerMode() ? () => {} : handleDeleteCombo}
             onSaveOrder={handleSaveOrder}
             onAddNewCustomer={handleAddCustomer}
-            onAddNewProduct={handleAddProduct}
+            onAddNewProduct={isPartnerMode() ? () => {} : handleAddProduct}
             newOrderTrigger={newOrderTrigger}
             editingOrder={editingOrder}
             onCancelEdit={() => setEditingOrder(null)}
           />
         )}
 
-        {/* Tab 2: Orders List */}
-        {activeTab === 'orders' && (
+        {/* Tab 2: Orders List (Ẩn hoàn toàn khỏi bản đối tác) */}
+        {activeTab === 'orders' && !isPartnerMode() && (
           <OrderList
             orders={orders}
             onViewOrder={(order) => setActivePrintOrder(order)}
@@ -651,8 +706,8 @@ export default function App() {
             materials={materials}
             stockImports={stockImports}
             inkImports={inkImports}
-            orders={orders}
-            products={products}
+            orders={partnerOrders}
+            products={partnerProducts}
             onSaveMaterial={handleSaveMaterial}
             onDeleteMaterial={handleDeleteMaterial}
             onSaveStockImport={handleSaveStockImport}
@@ -668,32 +723,32 @@ export default function App() {
           />
         )}
 
-        {/* Tab 4: Monthly & Yearly Analytics with Profit & Loss */}
+        {/* Tab 4: Monthly & Yearly Analytics with Profit & Loss (Doanh thu đã giảm 20% tự động nếu ở bản đối tác) */}
         {activeTab === 'analytics' && (
           <AnalyticsView
-            orders={orders}
-            products={products}
+            orders={partnerOrders}
+            products={partnerProducts}
             stockImports={stockImports}
-            customers={customers}
+            customers={partnerCustomers}
             currentUserEmail={currentUser?.email}
-            onResetYearData={handleResetYearData}
+            onResetYearData={isPartnerMode() ? undefined : handleResetYearData}
           />
         )}
 
-        {/* Tab 4: Product Catalog & Auto-Fill Price List */}
+        {/* Tab 5: Product Catalog & Auto-Fill Price List */}
         {activeTab === 'products' && (
           <ProductCatalogView
-            products={products}
+            products={partnerProducts}
             materials={materials}
-            onAddProduct={handleAddProduct}
-            onUpdateProduct={handleUpdateProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onBatchSaveProducts={handleBatchSaveProducts}
+            onAddProduct={isPartnerMode() ? () => {} : handleAddProduct}
+            onUpdateProduct={isPartnerMode() ? () => {} : handleUpdateProduct}
+            onDeleteProduct={isPartnerMode() ? () => {} : handleDeleteProduct}
+            onBatchSaveProducts={isPartnerMode() ? () => {} : handleBatchSaveProducts}
           />
         )}
 
-        {/* Tab 5: Customers & Debt Management */}
-        {activeTab === 'customers' && (
+        {/* Tab 6: Customers & Debt Management (Ẩn hoàn toàn khỏi bản đối tác) */}
+        {activeTab === 'customers' && !isPartnerMode() && (
           <CustomerManagementView
             customers={customers}
             orders={orders}
@@ -722,7 +777,7 @@ export default function App() {
       {/* Printable Invoice Modal */}
       {activePrintOrder && (
         <PrintInvoiceModal
-          order={activePrintOrder}
+          order={isPartnerMode() ? transformOrderForPartner(activePrintOrder) : activePrintOrder}
           workshop={workshop}
           onClose={() => setActivePrintOrder(null)}
         />

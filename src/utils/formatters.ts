@@ -1,3 +1,5 @@
+export { getDisplayPrice, getRevenueMultiplier, isPartnerMode } from './partnerConfig';
+
 export function formatCurrency(amount: number): string {
   if (isNaN(amount) || amount === null || amount === undefined) return '0 ₫';
   return new Intl.NumberFormat('vi-VN', {
