@@ -261,4 +261,12 @@ export interface InkImportRecord {
   createdBy?: string;
 }
 
+/**
+ * Khấu trừ doanh thu thủ công theo từng tháng hoặc năm
+ * Key: "${year}-${month}" (VD: "2026-1", "2026-2", "2026-initial"...)
+ * Value: Số tiền khấu trừ (VNĐ)
+ */
+export type MonthlyRevenueDeductions = Record<string, number>;
+
+
 

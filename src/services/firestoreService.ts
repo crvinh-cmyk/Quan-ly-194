@@ -959,4 +959,68 @@ export async function clearAllInkImportsFromFirestore(): Promise<void> {
   saveLocalInkImports([]);
 }
 
+// =================================================================
+// 9. REVENUE DEDUCTIONS (Khấu trừ doanh thu từng tháng)
+// =================================================================
+const STORAGE_KEY_REVENUE_DEDUCTIONS = 'xuongin194_revenue_deductions_v1';
+
+export function getLocalRevenueDeductions(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_REVENUE_DEDUCTIONS);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLocalRevenueDeductions(data: Record<string, number>): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_REVENUE_DEDUCTIONS, JSON.stringify(data));
+  } catch (e) {
+    console.error('Error saving local revenue deductions:', e);
+  }
+}
+
+export function subscribeRevenueDeductions(
+  onData: (deductions: Record<string, number>) => void,
+  onError?: (err: Error) => void
+) {
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'revenue_deductions');
+  return onSnapshot(docRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const raw = snapshot.data();
+      const cleanData: Record<string, number> = {};
+      Object.entries(raw).forEach(([k, v]) => {
+        if (k !== 'updatedAt' && k !== 'userId' && k !== 'createdBy') {
+          const num = Number(v);
+          if (!isNaN(num)) cleanData[k] = num;
+        }
+      });
+      saveLocalRevenueDeductions(cleanData);
+      onData(cleanData);
+    } else {
+      const local = getLocalRevenueDeductions();
+      onData(local);
+    }
+  }, (err) => {
+    console.error('Firestore revenue_deductions onSnapshot error:', err);
+    onData(getLocalRevenueDeductions());
+    if (onError) onError(err);
+  });
+}
+
+export async function saveRevenueDeductionsToFirestore(
+  deductions: Record<string, number>,
+  user?: AuthUserContext | null
+): Promise<void> {
+  saveLocalRevenueDeductions(deductions);
+  const docRef = doc(db, COLLECTIONS.SETTINGS, 'revenue_deductions');
+  const enriched = attachUserInfo({
+    ...deductions,
+    updatedAt: new Date().toISOString()
+  }, user);
+  await setDoc(docRef, cleanFirestoreObject(enriched), { merge: true });
+}
+
+
 

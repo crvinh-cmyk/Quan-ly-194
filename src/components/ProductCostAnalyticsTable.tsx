@@ -244,9 +244,6 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
       // 1. Tỷ suất Lợi Nhuận Gộp / Giá Bán (%) = (Lợi Nhuận Gộp / Giá Bán) * 100%
       const marginOnPrice = studioPrice > 0 ? (grossProfit / studioPrice) * 100 : 0;
 
-      // 2. Tỷ suất Lợi Nhuận Gộp / Giá Vốn (%) = (Lợi Nhuận Gộp / Giá Vốn) * 100% (cột PDF)
-      const marginOnCost = totalCost > 0 ? (grossProfit / totalCost) * 100 : 0;
-
       const hasCostData = totalCost > 0;
 
       return {
@@ -266,7 +263,6 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
         totalCost,
         grossProfit,
         marginOnPrice,
-        marginOnCost,
         hasCostData
       };
     });
@@ -297,14 +293,9 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
 
     const totalStudioValue = compiledRows.reduce((sum, r) => sum + r.studioPrice, 0);
     const totalCostValue = compiledRows.reduce((sum, r) => sum + r.totalCost, 0);
-    const totalProfitValue = compiledRows.reduce((sum, r) => sum + (r.hasCostData ? r.grossProfit : 0), 0);
 
     const avgMarginOnPrice = filledRowsList.length > 0
       ? filledRowsList.reduce((sum, r) => sum + r.marginOnPrice, 0) / filledRowsList.length
-      : 0;
-
-    const avgMarginOnCost = filledRowsList.length > 0
-      ? filledRowsList.reduce((sum, r) => sum + r.marginOnCost, 0) / filledRowsList.length
       : 0;
 
     return {
@@ -312,9 +303,7 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
       filledItems,
       totalStudioValue,
       totalCostValue,
-      totalProfitValue,
-      avgMarginOnPrice: Math.round(avgMarginOnPrice * 10) / 10,
-      avgMarginOnCost: Math.round(avgMarginOnCost * 10) / 10
+      avgMarginOnPrice: Math.round(avgMarginOnPrice * 10) / 10
     };
   }, [compiledRows]);
 
@@ -377,8 +366,7 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
       'Tổng Giá Vốn',
       'Giá Bán Sỉ/Studio',
       'Lợi Nhuận Gộp Ước Tính',
-      'Tỷ Suất LNG / Giá Bán (%)',
-      'Tỷ Suất LNG / Giá Vốn (%)'
+      'Tỷ Suất LNG / Giá Bán (%)'
     ];
 
     const rows = compiledRows.map(r => [
@@ -394,8 +382,7 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
       r.totalCost,
       r.studioPrice,
       r.grossProfit,
-      `${r.marginOnPrice.toFixed(1)}%`,
-      `${r.marginOnCost.toFixed(1)}%`
+      `${r.marginOnPrice.toFixed(1)}%`
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
@@ -488,8 +475,8 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
           </div>
         </div>
 
-        {/* 4 SUMMARY STATS CARDS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+        {/* 2 SUMMARY STATS CARDS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
             <span className="text-[11px] text-slate-500 font-bold block">Tổng số mã theo dõi</span>
             <div className="flex items-baseline gap-2 mt-1">
@@ -508,27 +495,6 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
               </span>
               <span className="text-[10px] text-amber-700">
                 (Biên lãi gộp)
-              </span>
-            </div>
-          </div>
-
-          <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl">
-            <span className="text-[11px] text-indigo-800 font-bold block">Tỷ Suất LNG / Giá Vốn TB</span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="font-mono text-xl sm:text-2xl font-black text-indigo-950">
-                {statsSummary.avgMarginOnCost > 0 ? `${statsSummary.avgMarginOnCost}%` : '—'}
-              </span>
-              <span className="text-[10px] text-indigo-700">
-                (Hệ số lãi trên vốn)
-              </span>
-            </div>
-          </div>
-
-          <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
-            <span className="text-[11px] text-emerald-800 font-bold block">Tổng Lợi Nhuận Gộp Đơn Vị</span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="font-mono text-lg sm:text-xl font-black text-emerald-950">
-                {formatCurrency(statsSummary.totalProfitValue)}
               </span>
             </div>
           </div>
@@ -606,9 +572,6 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
                 </th>
                 <th className="py-3 px-3 w-32 text-center bg-amber-900/80 text-amber-200 border-l border-amber-800" title="Tỷ suất LNG / Giá bán Studio (%) = (Lợi Nhuận Gộp / Giá Bán Sỉ) * 100%">
                   Tỷ Suất / Giá Bán
-                </th>
-                <th className="py-3 px-3 w-32 text-center bg-slate-850 text-slate-300 border-l border-slate-700" title="Tỷ suất LNG / Giá Vốn (%) = (Lợi Nhuận Gộp / Tổng Giá Vốn) * 100%">
-                  Tỷ Suất / Giá Vốn
                 </th>
               </tr>
             </thead>
@@ -777,17 +740,6 @@ export const ProductCostAnalyticsTable: React.FC<ProductCostAnalyticsTableProps>
                             <ArrowDownRight className="w-3 h-3" />
                           )}
                           <span>{row.marginOnPrice.toFixed(1)}%</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-[11px] italic">—</span>
-                      )}
-                    </td>
-
-                    {/* TỶ SUẤT LNG / GIÁ VỐN (%) (Theo cột Page 7 trong PDF) */}
-                    <td className="py-2.5 px-3 text-center border-l border-slate-200">
-                      {row.hasCostData && row.totalCost > 0 && row.studioPrice > 0 ? (
-                        <span className="inline-block px-2 py-0.5 rounded-md font-mono text-xs font-bold text-slate-800 bg-slate-100 border border-slate-200">
-                          {row.marginOnCost.toFixed(1)}%
                         </span>
                       ) : (
                         <span className="text-slate-400 text-[11px] italic">—</span>

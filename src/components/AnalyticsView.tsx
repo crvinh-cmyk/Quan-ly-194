@@ -1,12 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Order, Product, StockImportReceipt, Customer } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import {
   Calendar, DollarSign, Award, BarChart3, RotateCcw,
   Sparkles, CheckCircle2, Flame, ArrowDown, TrendingUp, Coins,
-  Table2
+  Table2, ShieldAlert
 } from 'lucide-react';
 import { ProductCostAnalyticsTable } from './ProductCostAnalyticsTable';
+import {
+  subscribeRevenueDeductions,
+  saveRevenueDeductionsToFirestore,
+  getLocalRevenueDeductions
+} from '../services/firestoreService';
 
 interface AnalyticsViewProps {
   orders: Order[];
@@ -34,6 +39,35 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   const [dailyMonth, setDailyMonth] = useState<number>(currentRealMonth);
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'monthly' | 'daily'>('all');
   const [activeMainSection, setActiveMainSection] = useState<'sales' | 'product_cost'>('sales');
+
+  // Khấu trừ doanh thu thủ công theo từng tháng / năm
+  const [revenueDeductions, setRevenueDeductions] = useState<Record<string, number>>(() =>
+    getLocalRevenueDeductions()
+  );
+
+  // Lắng nghe dữ liệu khấu trừ doanh thu thời gian thực từ Cloud Firestore
+  useEffect(() => {
+    const unsub = subscribeRevenueDeductions((data) => {
+      setRevenueDeductions(data);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
+  // Xử lý thay đổi số tiền khấu trừ doanh thu cho một tháng cụ thể
+  const handleDeductionChange = (month: number, rawVal: number) => {
+    const key = `${selectedYear}-${month}`;
+    const cleanVal = Math.max(0, rawVal);
+    const nextMap = {
+      ...revenueDeductions,
+      [key]: cleanVal
+    };
+    setRevenueDeductions(nextMap);
+    saveRevenueDeductionsToFirestore(nextMap, { email: currentUserEmail }).catch(err => {
+      console.error('Lỗi lưu khấu trừ doanh thu lên Firestore:', err);
+    });
+  };
 
   // Reset modal state
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -90,25 +124,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     return filteredOrders.reduce((sum, o) => sum + (o.subtotal - (o.discount || 0)), 0);
   }, [filteredOrders]);
 
-  // Top level KPI: "1. Doanh Thu Bán Ảnh (Cả Năm 2026)" liên kết lấy cả số liệu "Tổng doanh thu năm" bên Quản Lý Khách Hàng
-  const totalRevenue = useMemo(() => {
-    if (selectedMonth === 'all') {
-      return ordersRevenue + totalCustomersInitialRevenue;
-    }
-    return ordersRevenue;
-  }, [selectedMonth, ordersRevenue, totalCustomersInitialRevenue]);
-
-  const totalOrdersCount = filteredOrders.length;
-  const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
-
-  // Monthly 1-12 data for the selected year
+  // Monthly 1-12 data for the selected year with deductions & net revenue
   const monthlyData = useMemo(() => {
-    const months = Array.from({ length: 12 }, (_, i) => ({
-      month: i + 1,
-      name: `Th ${i + 1}`,
-      revenue: 0,
-      ordersCount: 0
-    }));
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const mNum = i + 1;
+      const deductionKey = `${selectedYear}-${mNum}`;
+      const deduction = revenueDeductions[deductionKey] || 0;
+      return {
+        month: mNum,
+        name: `Th ${mNum}`,
+        revenue: 0,
+        deduction,
+        netRevenue: 0,
+        ordersCount: 0
+      };
+    });
 
     // Aggregate sales orders
     orders.forEach(o => {
@@ -124,13 +154,62 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       }
     });
 
+    // Compute net revenue (Doanh thu thuần = Doanh thu bán ảnh - Khấu trừ)
+    months.forEach(m => {
+      m.netRevenue = Math.max(0, m.revenue - m.deduction);
+    });
+
     return months;
-  }, [orders, selectedYear]);
+  }, [orders, selectedYear, revenueDeductions]);
+
+  // Tổng số liệu cả năm
+  const totalYearGrossOrdersRevenue = useMemo(() => {
+    return monthlyData.reduce((sum, m) => sum + m.revenue, 0);
+  }, [monthlyData]);
+
+  const totalYearDeductions = useMemo(() => {
+    return monthlyData.reduce((sum, m) => sum + m.deduction, 0);
+  }, [monthlyData]);
+
+  const totalYearNetOrdersRevenue = useMemo(() => {
+    return monthlyData.reduce((sum, m) => sum + m.netRevenue, 0);
+  }, [monthlyData]);
+
+  // Tổng doanh thu gộp (Gross Revenue)
+  const totalGrossRevenue = useMemo(() => {
+    if (selectedMonth === 'all') {
+      return totalYearGrossOrdersRevenue + totalCustomersInitialRevenue;
+    }
+    const currentM = monthlyData.find(m => m.month === selectedMonth);
+    return currentM ? currentM.revenue : 0;
+  }, [selectedMonth, totalYearGrossOrdersRevenue, totalCustomersInitialRevenue, monthlyData]);
+
+  // Tổng khấu trừ kỳ đang chọn (Selected Period Deductions)
+  const selectedPeriodDeductions = useMemo(() => {
+    if (selectedMonth === 'all') {
+      return totalYearDeductions;
+    }
+    const currentM = monthlyData.find(m => m.month === selectedMonth);
+    return currentM ? currentM.deduction : 0;
+  }, [selectedMonth, totalYearDeductions, monthlyData]);
+
+  // Top level KPI: "Doanh Thu Thuần" dùng cho toàn bộ báo cáo doanh thu năm và thống kê sát thực tế
+  const totalNetRevenue = useMemo(() => {
+    if (selectedMonth === 'all') {
+      return totalYearNetOrdersRevenue + totalCustomersInitialRevenue;
+    }
+    const currentM = monthlyData.find(m => m.month === selectedMonth);
+    return currentM ? currentM.netRevenue : 0;
+  }, [selectedMonth, totalYearNetOrdersRevenue, totalCustomersInitialRevenue, monthlyData]);
+
+  const totalOrdersCount = filteredOrders.length;
+  const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalNetRevenue / totalOrdersCount) : 0;
 
   const maxChartValue = useMemo(() => {
     let max = 1000000;
     monthlyData.forEach(m => {
-      if (m.revenue > max) max = m.revenue;
+      const compareVal = Math.max(m.revenue, m.netRevenue);
+      if (compareVal > max) max = compareVal;
     });
     return max;
   }, [monthlyData]);
@@ -349,18 +428,32 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
       {/* TOP REVENUE SUMMARY BANNER */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-800 text-white rounded-2xl p-5 border border-slate-700 shadow-md">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg">
                 <DollarSign className="w-5 h-5" />
               </span>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                TỔNG DOANH THU BÁN ẢNH ({selectedMonth !== 'all' ? `THÁNG ${selectedMonth}` : `CẢ NĂM ${selectedYear}`})
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                TỔNG DOANH THU THUẦN ({selectedMonth !== 'all' ? `THÁNG ${selectedMonth}` : `CẢ NĂM ${selectedYear}`})
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                Thực tế sau khấu trừ
               </span>
             </div>
             <div className="font-mono text-3xl sm:text-4xl font-black text-amber-400">
-              {formatCurrency(totalRevenue)}
+              {formatCurrency(totalNetRevenue)}
+            </div>
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap text-xs text-slate-300">
+              <span>Doanh thu bán ảnh gộp: <strong className="font-mono text-white">{formatCurrency(totalGrossRevenue)}</strong></span>
+              {selectedPeriodDeductions > 0 && (
+                <>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-rose-300">
+                    Khấu trừ doanh thu: <strong className="font-mono text-rose-300">-{formatCurrency(selectedPeriodDeductions)}</strong>
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -370,7 +463,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               <p className="font-mono text-xl font-bold text-white mt-0.5">{totalOrdersCount} đơn</p>
             </div>
             <div>
-              <p className="text-xs text-slate-400">Giá trị trung bình / đơn</p>
+              <p className="text-xs text-slate-400">Giá trị TB thuần / đơn</p>
               <p className="font-mono text-xl font-bold text-blue-300 mt-0.5">{formatCurrency(avgOrderValue)}</p>
             </div>
           </div>
@@ -383,7 +476,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               Doanh thu đầu kỳ (nhập tay trong sổ khách hàng): <strong className="font-mono text-amber-300 text-sm">{formatCurrency(totalCustomersInitialRevenue)}</strong>
             </span>
             <span className="text-slate-400">
-              Hóa đơn phát sinh trên app: <strong className="font-mono text-white text-sm">{formatCurrency(ordersRevenue)}</strong> ({totalOrdersCount} đơn)
+              Hóa đơn phát sinh trên app: <strong className="font-mono text-white text-sm">{formatCurrency(totalYearGrossOrdersRevenue)}</strong> ({totalOrdersCount} đơn)
             </span>
           </div>
         )}
@@ -482,26 +575,47 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-extrabold border-b border-slate-200">
-                  <th className="py-3 px-4 w-36">Tháng</th>
-                  <th className="py-3 px-4 w-32 text-center">Số Đơn Hàng</th>
-                  <th className="py-3 px-4 text-right text-sm">Doanh Thu Bán Ảnh (VNĐ)</th>
-                  <th className="py-3 px-4 w-36 text-center">Hành Động</th>
+                  <th className="py-3 px-3 w-28">Tháng</th>
+                  <th className="py-3 px-2 w-24 text-center">Số Đơn</th>
+                  <th className="py-3 px-3 w-40 text-right text-sm">Doanh Thu Bán Ảnh (VNĐ)</th>
+                  <th className="py-3 px-3 w-44 text-right bg-rose-50/70 text-rose-900 border-l border-rose-200" title="Khoản trừ sau giảm giá, nợ không đòi được, hủy đơn hoặc lý do không thực hiện được (Nhập thủ công)">
+                    <div className="flex flex-col items-end">
+                      <div className="flex items-center gap-1 font-black text-xs text-rose-800">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Khấu Trừ Doanh Thu</span>
+                      </div>
+                      <span className="text-[10px] text-rose-600 font-normal mt-0.5">(Nhập thủ công)</span>
+                    </div>
+                  </th>
+                  <th className="py-3 px-3 w-44 text-right bg-emerald-50/80 text-emerald-950 border-l border-emerald-200 font-black text-sm" title="Doanh Thu Thuần = Doanh Thu Bán Ảnh - Khấu Trừ Doanh Thu">
+                    <div className="flex flex-col items-end">
+                      <span className="text-emerald-900 font-black text-xs">Doanh Thu Thuần</span>
+                      <span className="text-[10px] text-emerald-700 font-normal mt-0.5">(= Bán ảnh - Khấu trừ)</span>
+                    </div>
+                  </th>
+                  <th className="py-3 px-3 w-28 text-center">Hành Động</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {totalCustomersInitialRevenue > 0 && (
                   <tr className="bg-amber-50/70 text-slate-800 font-semibold border-b border-amber-200">
-                    <td className="py-3 px-4 font-bold text-amber-950 flex items-center gap-1.5">
+                    <td className="py-3 px-3 font-bold text-amber-950 flex items-center gap-1.5">
                       <Award className="w-4 h-4 text-amber-600 shrink-0" />
                       <span>Đầu kỳ (Sổ khách hàng)</span>
                     </td>
-                    <td className="py-3 px-4 text-center text-slate-500 font-mono text-xs">
-                      Trước khi dùng app
+                    <td className="py-3 px-2 text-center text-slate-500 font-mono text-xs">
+                      Trước app
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-amber-800 text-sm">
+                    <td className="py-3 px-3 text-right font-mono font-bold text-amber-800 text-sm">
                       {formatCurrency(totalCustomersInitialRevenue)}
                     </td>
-                    <td className="py-3 px-4 text-center text-xs font-semibold text-amber-800">
+                    <td className="py-3 px-3 text-right font-mono text-slate-400 border-l border-amber-200 text-xs">
+                      —
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono font-black text-amber-900 text-sm border-l border-amber-200 bg-amber-100/50">
+                      {formatCurrency(totalCustomersInitialRevenue)}
+                    </td>
+                    <td className="py-3 px-3 text-center text-xs font-semibold text-amber-800">
                       Sổ ghi nhận
                     </td>
                   </tr>
@@ -516,22 +630,47 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                         isCurrentSelected ? 'bg-amber-50/40 font-semibold' : ''
                       }`}
                     >
-                      <td className="py-3.5 px-4 font-bold text-slate-900 text-sm">
+                      <td className="py-3 px-3 font-bold text-slate-900 text-sm">
                         Tháng {m.month}/{selectedYear}
                       </td>
-                      <td className="py-3.5 px-4 text-center font-mono">
+                      <td className="py-3 px-2 text-center font-mono">
                         {m.ordersCount > 0 ? (
-                          <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-xs">
+                          <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold text-xs">
                             {m.ordersCount} đơn
                           </span>
                         ) : (
                           <span className="text-slate-400">0 đơn</span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-black text-slate-900 text-sm">
+                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-sm">
                         {formatCurrency(m.revenue)}
                       </td>
-                      <td className="py-3.5 px-4 text-center">
+
+                      {/* CỘT 1: KHẤU TRỪ DOANH THU (NHẬP THỦ CÔNG) */}
+                      <td className="py-2 px-3 text-right bg-rose-50/30 border-l border-rose-100">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={m.deduction > 0 ? m.deduction.toLocaleString('en-US') : ''}
+                            onChange={(e) => {
+                              const val = Number(e.target.value.replace(/\D/g, '')) || 0;
+                              handleDeductionChange(m.month, val);
+                            }}
+                            placeholder="0"
+                            title="Khấu trừ doanh thu: nợ khó đòi, trừ sau giảm giá, lý do không thu được..."
+                            className="w-28 px-2 py-1 bg-white hover:bg-rose-50/20 focus:bg-white border border-slate-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-lg text-right font-mono text-xs font-black text-rose-700 outline-none transition shadow-2xs"
+                          />
+                          <span className="text-[11px] text-slate-400 font-mono">₫</span>
+                        </div>
+                      </td>
+
+                      {/* CỘT 2: DOANH THU THUẦN (= DOANH THU BÁN ẢNH - KHẤU TRỪ DOANH THU) */}
+                      <td className="py-3 px-3 text-right font-mono font-black text-emerald-800 text-sm bg-emerald-50/40 border-l border-emerald-100">
+                        {formatCurrency(m.netRevenue)}
+                      </td>
+
+                      <td className="py-3 px-3 text-center">
                         <button
                           type="button"
                           onClick={() => {
@@ -557,14 +696,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               </tbody>
               <tfoot>
                 <tr className="bg-slate-900 text-white font-extrabold text-sm">
-                  <td className="py-3.5 px-4">TỔNG NĂM {selectedYear}</td>
-                  <td className="py-3.5 px-4 text-center font-mono text-amber-400">
+                  <td className="py-3.5 px-3">TỔNG NĂM {selectedYear}</td>
+                  <td className="py-3.5 px-2 text-center font-mono text-blue-300 text-xs">
                     {monthlyData.reduce((s, m) => s + m.ordersCount, 0)} đơn
                   </td>
-                  <td className="py-3.5 px-4 text-right font-mono text-amber-400 text-base font-black">
-                    {formatCurrency(totalRevenue)}
+                  <td className="py-3.5 px-3 text-right font-mono text-slate-200 text-sm font-bold">
+                    {formatCurrency(totalGrossRevenue)}
                   </td>
-                  <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-normal">
+                  <td className="py-3.5 px-3 text-right font-mono text-rose-300 text-sm font-bold border-l border-slate-800">
+                    {totalYearDeductions > 0 ? `-${formatCurrency(totalYearDeductions)}` : '0 ₫'}
+                  </td>
+                  <td className="py-3.5 px-3 text-right font-mono text-amber-400 text-base font-black border-l border-slate-800 bg-slate-950/40">
+                    {formatCurrency(totalNetRevenue)}
+                  </td>
+                  <td className="py-3.5 px-3 text-center text-slate-400 text-xs font-normal">
                     12 Tháng
                   </td>
                 </tr>
@@ -840,19 +985,32 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
           <div>
             <h3 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-amber-600" />
-              BIỂU ĐỒ DOANH SỐ 12 THÁNG NĂM {selectedYear}
+              <BarChart3 className="w-4 h-4 text-emerald-600" />
+              <span>BIỂU ĐỒ DOANH THU THUẦN 12 THÁNG NĂM {selectedYear}</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                Thực tế sau khấu trừ
+              </span>
             </h3>
             <p className="text-xs text-slate-500">
               Nhấp vào từng cột tháng để chuyển nhanh xem chi tiết từng ngày của tháng đó
             </p>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-slate-600 font-medium">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block"></span>
+              <span>Doanh thu thuần</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              <span>Tháng đang chọn</span>
+            </div>
           </div>
         </div>
 
         {/* Bar chart container */}
         <div className="h-56 flex items-end justify-between gap-1 sm:gap-3 pt-6 pb-2 px-1 border-b border-slate-200">
           {monthlyData.map(m => {
-            const revHeight = maxChartValue > 0 ? (m.revenue / maxChartValue) * 100 : 0;
+            const revHeight = maxChartValue > 0 ? (m.netRevenue / maxChartValue) * 100 : 0;
             const isCurrentSelected = dailyMonth === m.month;
 
             return (
@@ -862,21 +1020,23 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                 className={`flex-1 flex flex-col items-center h-full justify-end group cursor-pointer p-1 rounded-t-lg transition ${
                   isCurrentSelected ? 'bg-amber-100/60 font-bold' : 'hover:bg-slate-50'
                 }`}
-                title={`Tháng ${m.month}/${selectedYear}: Doanh thu ${formatCurrency(m.revenue)}`}
+                title={`Tháng ${m.month}/${selectedYear}: Doanh thu thuần ${formatCurrency(m.netRevenue)}${
+                  m.deduction > 0 ? ` (Bán ảnh gộp: ${formatCurrency(m.revenue)} - Khấu trừ: ${formatCurrency(m.deduction)})` : ''
+                }`}
               >
                 {/* Value tooltip on hover */}
                 <div className="text-[10px] font-mono text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition whitespace-nowrap hidden sm:block">
-                  {m.revenue > 0 ? `${Math.round(m.revenue / 1000000)}Tr` : '0'}
+                  {m.netRevenue > 0 ? `${Math.round(m.netRevenue / 1000000)}Tr` : '0'}
                 </div>
 
                 <div className="w-full flex items-end justify-center h-40">
                   {/* Revenue Bar */}
                   <div
-                    style={{ height: `${Math.max(revHeight, m.revenue > 0 ? 4 : 0)}%` }}
+                    style={{ height: `${Math.max(revHeight, m.netRevenue > 0 ? 4 : 0)}%` }}
                     className={`w-full max-w-[28px] rounded-t-md transition-all duration-300 ${
                       isCurrentSelected
-                        ? 'bg-amber-500 group-hover:bg-amber-600'
-                        : 'bg-blue-500 group-hover:bg-blue-600'
+                        ? 'bg-amber-500 group-hover:bg-amber-600 shadow-xs'
+                        : 'bg-emerald-600 group-hover:bg-emerald-500'
                     }`}
                   />
                 </div>
