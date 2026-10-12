@@ -26,7 +26,6 @@ import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DataManagementModal } from './components/DataManagementModal';
 import { LoginView } from './components/LoginView';
-import { RevenueTrackingS1aView } from './components/RevenueTrackingS1aView';
 import { isPartnerMode, transformOrderForPartner, applyPartnerDiscount, getDisplayPrice } from './utils/partnerConfig';
 
 const STORAGE_TAB_KEY = 'xuongin194_active_tab';
@@ -36,7 +35,7 @@ const getInitialTab = (): ActiveTab => {
     return 'pos';
   }
   try {
-    const validTabs: ActiveTab[] = ['pos', 's1a', 'orders', 'inventory', 'analytics', 'products', 'customers'];
+    const validTabs: ActiveTab[] = ['pos', 'orders', 'inventory', 'analytics', 'products', 'customers'];
     
     // 1. Check sessionStorage first (current active session)
     const fromSession = sessionStorage.getItem(STORAGE_TAB_KEY);
@@ -607,16 +606,6 @@ export default function App() {
           >
             Bán Hàng
           </button>
-          {isPartnerMode() && (
-            <button
-              onClick={() => handleSelectTab('s1a')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 ${
-                activeTab === 's1a' ? 'bg-amber-500 text-slate-950 font-extrabold' : 'bg-amber-50 text-amber-900 border border-amber-200'
-              }`}
-            >
-              Mẫu S1a
-            </button>
-          )}
           {!isPartnerMode() && (
             <button
               onClick={() => handleSelectTab('orders')}
@@ -692,14 +681,6 @@ export default function App() {
             newOrderTrigger={newOrderTrigger}
             editingOrder={editingOrder}
             onCancelEdit={() => setEditingOrder(null)}
-          />
-        )}
-
-        {/* Tab Phụ: Theo dõi doanh thu mẫu S1a (Chỉ cho bản Đối Tác / Partner View) */}
-        {activeTab === 's1a' && isPartnerMode() && (
-          <RevenueTrackingS1aView
-            orders={orders}
-            workshop={workshop}
           />
         )}
 
